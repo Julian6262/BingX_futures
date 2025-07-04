@@ -1,0 +1,232 @@
+from asyncio import sleep
+from decimal import Decimal
+from gzip import decompress
+from time import time
+from hmac import new as hmac_new
+from hashlib import sha256
+
+from aiohttp import ClientSession, ClientConnectorError
+from logging import getLogger
+from json import loads, JSONDecodeError
+
+from common.config import config
+from common.func import add_task
+from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager, ConfigManager
+
+logger = getLogger('my_app')
+
+ws_price = WebSocketPrice()
+so_manager = SymbolOrderManager()
+account_manager = AccountManager()
+task_manager = TaskManager()
+config_manager = ConfigManager()
+
+
+async def _send_request(method: str, session: ClientSession, endpoint: str, params: dict):
+    params['timestamp'] = int(time() * 1000)
+    params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
+    sign = hmac_new(config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
+    url = f"{config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
+
+    try:
+        async with session.request(method, url) as response:
+            if response.status == 200:
+                if response.content_type == 'application/json':
+                    data = await response.json()
+                elif response.content_type == 'text/plain':
+                    data = loads(await response.text())
+                else:
+                    return None, f"Неожиданный Content-Type send_request: {response.content_type}"
+
+                return data, "OK"
+
+            else:
+                return None, f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}"
+
+    except ClientConnectorError as e:
+        return None, f'Ошибка соединения с сетью (send_request): {e}'
+
+    except JSONDecodeError as e:
+        return None, f"Ошибка декодирования send_request JSON: {e}"
+
+    except Exception as e:
+        return None, f"Ошибка при выполнении запроса send_request: {e}"
+
+
+async def place_order(symbol: str, session: ClientSession, side: str, executed_qty: float | Decimal):
+    endpoint = '/openApi/cswap/v1/trade/order'
+    params = {"symbol": f'{symbol}-USD', "type": "MARKET", "side": side, "quantity": executed_qty}
+
+    return await _send_request("POST", session, endpoint, params)
+
+
+async def manage_listen_key(http_session: ClientSession):
+    endpoint = '/openApi/user/auth/userDataStream'  # OK
+
+    listen_key, text = await _send_request("POST", http_session, endpoint, {})
+    if listen_key is None:
+        logger.error(f'Ошибка получения listen_key: {text}')
+        return
+
+    await account_manager.add_listen_key(listen_key['listenKey'])
+    while True:
+        await sleep(1200)
+        await _send_request("PUT", http_session, endpoint, {"listenKey": listen_key['listenKey']})
+
+
+async def account_upd_ws(http_session: ClientSession):
+    while not (listen_key := await account_manager.get_listen_key()):
+        await sleep(0.3)  # Задержка перед попыткой получения ключа
+
+    channel = {"id": "1", "reqType": "sub", "dataType": "ACCOUNT_UPDATE"}  # NO OK !!!!!!!!!!!!!!
+    url = f"{config.URL_WS}?listenKey={await account_manager.get_listen_key()}"
+
+    while True:  # Цикл для повторного подключения
+        try:
+            async with http_session.ws_connect(url) as ws:
+                logger.info(f"WebSocket connected account_upd_ws")
+                await ws.send_json(channel)
+
+                async for message in ws:
+                    try:
+                        if 'e' in (data := loads(decompress(message.data).decode())):
+                            await account_manager.update_balance_batch(data['a']['B'])
+                            logger.info(f"Account_upd_ws: {data['a']}")
+
+                    except Exception as e:
+                        logger.error(f"Непредвиденная ошибка account_upd_ws: {e}, сообщение: {message.data}")
+
+        except Exception as e:
+            logger.error(f"Критическая ошибка account_upd_ws: {e}")
+
+        logger.error(f"account_upd_ws завершился. Переподключение через 5 секунд.")
+        await sleep(5)
+
+
+@add_task(task_manager, so_manager, 'price_upd')
+async def price_upd_ws(symbol, **kwargs):
+    seconds = kwargs.get('seconds', 0)
+    http_session = kwargs.get('http_session')
+
+    channel = {"id": '1', "reqType": "sub", "dataType": f"{symbol}-USD@markPrice"}
+    await sleep(seconds)  # Задержка перед запуском функции, иначе ошибка API
+
+    while True:
+        try:
+            async with http_session.ws_connect(config.URL_WS) as ws:
+                # logger.info(f"WebSocket connected price_upd_ws for {symbol}")
+                await ws.send_json(channel)
+
+                async for message in ws:
+                    try:
+                        if 'data' in (data := loads(decompress(message.data).decode())):
+                            await ws_price.update_price(symbol, int(time() * 1000), float(data["data"]["p"]))
+
+                    except Exception as e:
+                        logger.error(f"Непредвиденная ошибка price_upd_ws: {e}, сообщение: {message.data}")
+
+        except Exception as e:
+            logger.error(f"Критическая ошибка price_upd_ws: {symbol}, {e}")
+
+        # logger.error(f"price_upd_ws для {symbol} завершился. Переподключение через 5 секунд.")
+        await sleep(5)  # Пауза перед повторным подключением
+
+
+async def _init_virtual_grid(symbol: str, num_steps: int, step_size: float, init_grid_step: float):
+    _, current_price = await ws_price.get_price(symbol)
+
+    half_n = num_steps // 2
+    grid_boundaries = {}
+
+    for i in range(num_steps):
+        grid_price_upper = init_grid_step + step_size * (i - half_n)
+        grid_price_lower = grid_price_upper - step_size
+        grid_boundaries[i] = [grid_price_lower, grid_price_upper, True]
+
+        if grid_price_lower <= current_price < grid_price_upper:
+            await so_manager.set_grid_boundaries(symbol, [i, grid_price_lower, grid_price_upper])
+
+            print(f"Цена {symbol}: {current_price}")
+            print(f'текущий предел {i}: {grid_boundaries[i]}')
+
+    print(f"Цены сетки для {symbol}: {grid_boundaries}")
+
+    return grid_boundaries
+
+
+@add_task(task_manager, so_manager, 'start_trading')
+async def start_trading(symbol, **kwargs):
+    session = kwargs.get('session')
+    http_session = kwargs.get('http_session')
+    async_session = kwargs.get('async_session')
+
+    async def trading_logic():
+        while not await ws_price.get_price(symbol):
+            await sleep(0.3)  # Задержка перед попыткой получения цены
+
+        logger.info(f'Запуск торговли {symbol}')
+
+        num_steps = 40
+
+        init_grid_step = await config_manager.get_data(symbol, 'init_grid_step')
+        step_size = init_grid_step * await config_manager.get_data(symbol, 'grid_size')  # grid size в %
+
+        grid_boundaries = await _init_virtual_grid(symbol, num_steps, step_size, init_grid_step)
+
+        async def manage_grid(symbol, grid_boundaries, num_steps, step_size):
+            while True:
+                _, current_price = await ws_price.get_price(symbol)
+                index_old, lower_old, upper_old = await so_manager.get_grid_boundaries(symbol)
+
+                if not (lower_old < current_price < upper_old):
+                    # print('\nвход в цикл')
+
+                    for index, (lower, upper, flag) in grid_boundaries.items():
+                        if lower <= current_price < upper and index_old < index:
+
+                            # print(f"До изменения grid_boundaries: {grid_boundaries}")
+                            # print(f'index_old {index_old}, index {index}, {lower}, {upper}, {flag}')
+
+                            if flag:
+                                tp_price = current_price + (step_size * (1 - 0.001))
+                                # await place_order(symbol, "buy", upper, tp_price)
+                                logger.info(f"Покупка {grid_boundaries[index]} по цене {current_price}, TP: {tp_price}")
+
+                            await so_manager.set_grid_boundaries(symbol, [index, lower, upper])
+                            for i in range(num_steps):
+                                grid_boundaries[i][2] = True
+                            # Добавить исключения от открытых ордеров !!!!!!!!!!
+                            grid_boundaries[index - 1][2] = False
+
+                            # print(f"после изменения grid_boundaries: {grid_boundaries}\n")
+                            break
+
+
+                        elif lower < current_price <= upper and index_old > index:
+
+                            # print(f"До изменения grid_boundaries: {grid_boundaries}")
+                            # print(f'index_old {index_old}, index {index}, {lower}, {upper}, {flag}')
+
+                            if flag:
+                                tp_price = current_price - (step_size * (1 - 0.001))
+                                # await place_order(symbol, "sell", lower, tp_price)
+                                logger.info(f"Продажа {grid_boundaries[index]} по цене {current_price}, TP: {tp_price}")
+
+                            await so_manager.set_grid_boundaries(symbol, [index, lower, upper])
+                            for i in range(num_steps):
+                                grid_boundaries[i][2] = True
+                            # Добавить исключения от открытых ордеров !!!!!!!!!!
+                            grid_boundaries[index + 1][2] = False
+
+                            # print(f"После изменения grid_boundaries: {grid_boundaries}\n")
+                            break
+
+                await sleep(0.05)
+
+        await manage_grid(symbol, grid_boundaries, num_steps, step_size)
+
+    if session is None:  # Сессия не передана, создаем новый async_session_maker
+        async with async_session() as session:
+            await trading_logic()
+    else:  # Сессия передана, используем ее (используется в хэндлерах)
+        await trading_logic()
