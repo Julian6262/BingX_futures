@@ -1,10 +1,12 @@
 from asyncio import sleep
 from decimal import Decimal
+from datetime import datetime
 from gzip import decompress
 from time import time
 from hmac import new as hmac_new
 from hashlib import sha256
 
+import requests
 from aiohttp import ClientSession, ClientConnectorError
 from logging import getLogger
 from json import loads, JSONDecodeError
@@ -12,6 +14,7 @@ from json import loads, JSONDecodeError
 from common.config import config
 from common.func import add_task
 from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager, ConfigManager
+from database.orm_query import add_order
 
 logger = getLogger('my_app')
 
@@ -22,12 +25,55 @@ task_manager = TaskManager()
 config_manager = ConfigManager()
 
 
+async def _send_request111(method: str, session: ClientSession, endpoint: str, params: dict):
+    params['timestamp'] = int(time() * 1000)
+    params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
+    sign = hmac_new(config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
+    url = f"{config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
+
+    # headers = {
+    #     'X-BX-APIKEY': config.API_KEY,
+    # }
+    #
+    # response = requests.request(method, url, headers=headers, data={})
+    # return loads(response.text), "OK"
+    try:
+        async with session.post(url) as response:
+            if response.status == 200:
+                if response.content_type == 'application/json':
+                    data = await response.json()
+                elif response.content_type == 'text/plain':
+                    data = loads(await response.text())
+                else:
+                    return None, f"Неожиданный Content-Type send_request: {response.content_type}"
+
+                return data, "OK"
+
+            else:
+                return None, f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}"
+
+    except ClientConnectorError as e:
+        return None, f'Ошибка соединения с сетью (send_request): {e}'
+
+    except JSONDecodeError as e:
+        return None, f"Ошибка декодирования send_request JSON: {e}"
+
+    except Exception as e:
+        return None, f"Ошибка при выполнении запроса send_request: {e}"
+
+
 async def _send_request(method: str, session: ClientSession, endpoint: str, params: dict):
     params['timestamp'] = int(time() * 1000)
     params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
     sign = hmac_new(config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
     url = f"{config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
 
+    # headers = {
+    #     'X-BX-APIKEY': config.API_KEY,
+    # }
+    #
+    # response = requests.request(method, url, headers=headers, data={})
+    # return loads(response.text), "OK"
     try:
         async with session.request(method, url) as response:
             if response.status == 200:
@@ -138,10 +184,15 @@ async def _init_virtual_grid(symbol: str, num_steps: int, step_size: float, init
     half_n = num_steps // 2
     grid_boundaries = {}
 
+    orders_boundaries_index = [order['boundaries_index'] for order in await so_manager.get_orders(symbol)]
+
     for i in range(num_steps):
         grid_price_upper = init_grid_step + step_size * (i - half_n)
         grid_price_lower = grid_price_upper - step_size
-        grid_boundaries[i] = [grid_price_lower, grid_price_upper, True]
+
+        flag = False if i in orders_boundaries_index else True
+        grid_boundaries[i] = [grid_price_lower, grid_price_upper, flag]
+
 
         if grid_price_lower <= current_price < grid_price_upper:
             await so_manager.set_grid_boundaries(symbol, [i, grid_price_lower, grid_price_upper])
@@ -173,57 +224,80 @@ async def start_trading(symbol, **kwargs):
 
         grid_boundaries = await _init_virtual_grid(symbol, num_steps, step_size, init_grid_step)
 
-        async def manage_grid(symbol, grid_boundaries, num_steps, step_size):
-            while True:
-                _, current_price = await ws_price.get_price(symbol)
-                index_old, lower_old, upper_old = await so_manager.get_grid_boundaries(symbol)
+        while True:
+            _, current_price = await ws_price.get_price(symbol)
+            index_old, lower_old, upper_old = await so_manager.get_grid_boundaries(symbol)
 
-                if not (lower_old < current_price < upper_old):
-                    # print('\nвход в цикл')
+            if not (lower_old < current_price < upper_old):
+                orders_boundaries_index = [order['boundaries_index'] for order in await so_manager.get_orders(symbol)]
 
-                    for index, (lower, upper, flag) in grid_boundaries.items():
-                        if lower <= current_price < upper and index_old < index:
+                for index, (lower, upper, flag) in grid_boundaries.items():
+                    if lower <= current_price < upper and index_old < index:
 
-                            # print(f"До изменения grid_boundaries: {grid_boundaries}")
-                            # print(f'index_old {index_old}, index {index}, {lower}, {upper}, {flag}')
+                        print(f"\nДо изменения grid_boundaries: {grid_boundaries}")
+                        print(f'index_old {index_old}, index {index}, {lower}, {upper}, {flag}')
 
-                            if flag:
-                                tp_price = current_price + (step_size * (1 - 0.001))
-                                # await place_order(symbol, "buy", upper, tp_price)
-                                logger.info(f"Покупка {grid_boundaries[index]} по цене {current_price}, TP: {tp_price}")
+                        if flag:
+                            # tp_price = upper - abs((upper - lower)) * 0.1
+                            tp_price = upper
+                            # await place_order(symbol, "buy", upper, tp_price)
+                            logger.info(f"Покупка {grid_boundaries[index]} по цене {current_price}, TP: {tp_price}")
 
-                            await so_manager.set_grid_boundaries(symbol, [index, lower, upper])
-                            for i in range(num_steps):
-                                grid_boundaries[i][2] = True
-                            # Добавить исключения от открытых ордеров !!!!!!!!!!
-                            grid_boundaries[index - 1][2] = False
+                            data_for_db = {
+                                'boundaries_index': index,
+                                'open_time': datetime.fromtimestamp(int(time()))
+                            }
 
-                            # print(f"после изменения grid_boundaries: {grid_boundaries}\n")
-                            break
+                            order_id = await add_order(session, symbol, data_for_db)  # Добавить ордер в базу
+                            data_for_db['id'] = order_id  # Добавить id ордера в память
+                            await so_manager.update_order(symbol, data_for_db)  # Добавить ордер в память
+                            orders_boundaries_index.append(index)
+
+                        await so_manager.set_grid_boundaries(symbol, [index, lower, upper])
+
+                        for i in range(num_steps):
+                            flag = False if i in orders_boundaries_index else True
+                            grid_boundaries[i][2] = flag
+
+                        grid_boundaries[index - 1][2] = False
+
+                        print(f"после изменения grid_boundaries: {grid_boundaries}\n")
+                        break
 
 
-                        elif lower < current_price <= upper and index_old > index:
+                    elif lower < current_price <= upper and index_old > index:
 
-                            # print(f"До изменения grid_boundaries: {grid_boundaries}")
-                            # print(f'index_old {index_old}, index {index}, {lower}, {upper}, {flag}')
+                        print(f"\nДо изменения grid_boundaries: {grid_boundaries}")
+                        print(f'index_old {index_old}, index {index}, {lower}, {upper}, {flag}')
 
-                            if flag:
-                                tp_price = current_price - (step_size * (1 - 0.001))
-                                # await place_order(symbol, "sell", lower, tp_price)
-                                logger.info(f"Продажа {grid_boundaries[index]} по цене {current_price}, TP: {tp_price}")
+                        if flag:
+                            # tp_price = lower + abs((upper - lower)) * 0.1
+                            tp_price = lower
+                            # await place_order(symbol, "sell", lower, tp_price)
+                            logger.info(f"Продажа {grid_boundaries[index]} по цене {current_price}, TP: {tp_price}")
 
-                            await so_manager.set_grid_boundaries(symbol, [index, lower, upper])
-                            for i in range(num_steps):
-                                grid_boundaries[i][2] = True
-                            # Добавить исключения от открытых ордеров !!!!!!!!!!
-                            grid_boundaries[index + 1][2] = False
+                            data_for_db = {
+                                'boundaries_index': index,
+                                'open_time': datetime.fromtimestamp(int(time()))
+                            }
 
-                            # print(f"После изменения grid_boundaries: {grid_boundaries}\n")
-                            break
+                            order_id = await add_order(session, symbol, data_for_db)  # Добавить ордер в базу
+                            data_for_db['id'] = order_id  # Добавить id ордера в память
+                            await so_manager.update_order(symbol, data_for_db)  # Добавить ордер в память
+                            orders_boundaries_index.append(index)
 
-                await sleep(0.05)
+                        await so_manager.set_grid_boundaries(symbol, [index, lower, upper])
 
-        await manage_grid(symbol, grid_boundaries, num_steps, step_size)
+                        for i in range(num_steps):
+                            flag = False if i in orders_boundaries_index else True
+                            grid_boundaries[i][2] = flag
+
+                        grid_boundaries[index + 1][2] = False
+
+                        print(f"После изменения grid_boundaries: {grid_boundaries}\n")
+                        break
+
+            await sleep(0.01)
 
     if session is None:  # Сессия не передана, создаем новый async_session_maker
         async with async_session() as session:

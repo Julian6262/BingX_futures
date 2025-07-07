@@ -4,7 +4,7 @@ from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from database.models import Symbol, SymbolConfig, Base
+from database.models import Symbol, SymbolConfig, Base, OrderInfo
 
 logger = getLogger('my_app')
 
@@ -16,17 +16,17 @@ async def init_db(engine, drop_all=False):
         await conn.run_sync(Base.metadata.create_all)  # Всегда создаем таблицы
 
 
-# # Добавить новый ордер в БД
-# async def add_order(session: AsyncSession, symbol_name: str, data: dict):
-#     try:
-#         db_symbol = (await session.execute(select(Symbol).where(Symbol.name == symbol_name))).scalar_one_or_none()
-#         new_order = OrderInfo(**data, symbol=db_symbol)
-#         session.add(new_order)
-#         await session.commit()
-#         return int(new_order.id)
-#
-#     except Exception as e:
-#         logger.error(f'Error adding order to DB: {e}')
+# Добавить новый ордер в БД
+async def add_order(session: AsyncSession, symbol_name: str, data: dict):
+    try:
+        db_symbol = (await session.execute(select(Symbol).where(Symbol.name == symbol_name))).scalar_one_or_none()
+        new_order = OrderInfo(**data, symbol=db_symbol)
+        session.add(new_order)
+        await session.commit()
+        return int(new_order.id)
+
+    except Exception as e:
+        logger.error(f'Error adding order to DB: {e}')
 
 
 # Изменить состояние у монеты

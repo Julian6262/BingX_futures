@@ -5,7 +5,8 @@ from aiogram.types import Message
 from aiohttp import ClientSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bingx_api.bingx_command import so_manager, task_manager, config_manager, price_upd_ws, start_trading
+from bingx_api.bingx_command import so_manager, task_manager, config_manager, price_upd_ws, start_trading, \
+    _send_request, _send_request111
 from common.config import config
 from database.orm_query import del_symbol, add_symbol, update_state
 from filters.chat_types import IsAdmin
@@ -95,30 +96,72 @@ async def start_cmd(message: Message, session: AsyncSession, http_session: Clien
     for tasks in so_manager._data.items():
         print(tasks)
 
-    # profit = await so_manager.get_profit('ADA')
-    # await message.answer(f'profit ADA {profit}')
-    # profit = await so_manager.get_profit('TRX')
-    # await message.answer(f'profit TRX {profit}')
-    # profit = await so_manager.get_profit('XRP')
-    # await message.answer(f'profit XRP {profit}')
-    # sum_profit = await so_manager.get_summary_profit()
-    # await message.answer(f'sum_profit {sum_profit}')
-
-    # endpoint = '/openApi/cswap/v1/trade/order'
+    # async def get_current_orders(symbol: str, session: ClientSession):
+    #     endpoint = '/openApi/cswap/v1/user/positions'
+    #     params = {"symbol": f'{symbol}-USD'}
     #
-    # params = {"symbol": 'ADA-USD',
-    #           "type": "TRIGGER_MARKET",
-    #           "side": "SELL",
-    #           "quantity": 1,
-    #           # "price": 0.5845,
-    #           "positionSide": "SHORT",
-    #           "stopPrice": 0.5,
-    #           # "takeProfit": "{\"type\": \"TAKE_PROFIT_MARKET\", \"stopPrice\": 31968.0,\"price\": 31968.0,\"workingType\":\"MARK_PRICE\"}"
-    #           }
+    #     return await _send_request("GET", session, endpoint, params)
+
+    # async def place_order(symbol: str, session: ClientSession):
+    #     endpoint = '/openApi/cswap/v1/trade/order'
+    #     params = {
+    #         "symbol": "TONCOIN-USD",
+    #         "side": "BUY",
+    #         "positionSide": "LONG",
+    #         "type": "MARKET",
+    #         "quantity": 1,
+    #         "takeProfit": "{\"type\": \"TAKE_PROFIT_MARKET\", \"stopPrice\": 2.7584,\"workingType\":\"MARK_PRICE\"}"
+    #     }
     #
-    # report = await send_request("POST", http_session, endpoint, params)
-    # print(report)
-    # await message.answer(report)
+    #     return await _send_request111("POST", session, endpoint, params)
 
+    # response = await place_order('TONCOIN', http_session)
+    # await message.answer(str(response))
 
-
+    # import time
+    # import requests
+    # import hmac
+    # from hashlib import sha256
+    #
+    # APIURL = "https://open-api.bingx.com"
+    # APIKEY = config.API_KEY
+    # SECRETKEY = config.SECRET_KEY
+    #
+    # async def demo():
+    #     payload = {}
+    #     path = '/openApi/cswap/v1/trade/order'
+    #     method = "POST"
+    #     paramsMap = {
+    #         "symbol": "TONCOIN-USD",
+    #         "side": "BUY",
+    #         "positionSide": "LONG",
+    #         "type": "MARKET",
+    #         "quantity": 1,
+    #         "takeProfit": "{\"type\": \"TAKE_PROFIT_MARKET\", \"stopPrice\": 2.7584,\"workingType\":\"MARK_PRICE\"}"
+    #     }
+    #     paramsStr = await parseParam(paramsMap)
+    #     return await send_request(method, path, paramsStr, payload)
+    #
+    # async def get_sign(api_secret, payload):
+    #     signature = hmac.new(api_secret.encode("utf-8"), payload.encode("utf-8"), digestmod=sha256).hexdigest()
+    #     print("sign=" + signature)
+    #     return signature
+    #
+    # async def send_request(method, path, urlpa, payload):
+    #     url = "%s%s?%s&signature=%s" % (APIURL, path, urlpa, await get_sign(SECRETKEY, urlpa))
+    #     print(url)
+    #     headers = {
+    #         'X-BX-APIKEY': APIKEY,
+    #     }
+    #     response = requests.request(method, url, headers=headers, data=payload)
+    #     return response.text
+    #
+    # async def parseParam(paramsMap):
+    #     sortedKeys = sorted(paramsMap)
+    #     paramsStr = "&".join(["%s=%s" % (x, paramsMap[x]) for x in sortedKeys])
+    #     if paramsStr != "":
+    #         return paramsStr + "&timestamp=" + str(int(time.time() * 1000))
+    #     else:
+    #         return paramsStr + "timestamp=" + str(int(time.time() * 1000))
+    #
+    # print(await demo())

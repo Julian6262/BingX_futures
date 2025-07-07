@@ -9,7 +9,7 @@ from common.config import config
 from database.orm_query import load_from_db, init_db
 from handlers import router
 
-from bingx_api.bingx_command import price_upd_ws, manage_listen_key, so_manager, start_trading,     config_manager
+from bingx_api.bingx_command import price_upd_ws, manage_listen_key, so_manager, start_trading, config_manager
 
 from middlewares.db import DataBaseSession
 from middlewares.http import HttpSession
