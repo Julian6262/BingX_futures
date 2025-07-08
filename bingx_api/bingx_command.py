@@ -14,7 +14,7 @@ from json import loads, JSONDecodeError
 from common.config import config
 from common.func import add_task
 from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager, ConfigManager
-from database.orm_query import add_order
+from database.orm_query import add_order, del_orders
 
 logger = getLogger('my_app')
 
@@ -184,18 +184,20 @@ async def _init_virtual_grid(symbol: str, num_steps: int, step_size: float, init
     half_n = num_steps // 2
     grid_boundaries = {}
 
-    orders_boundaries_index = [order['boundaries_index'] for order in await so_manager.get_orders(symbol)]
+    orders = await so_manager.get_orders(symbol)
+    orders_boundaries_data = {order['boundaries_index']: order['order_type'] for order in orders}
+    orders_boundaries_index = orders_boundaries_data.keys()
 
     for i in range(num_steps):
         grid_price_upper = init_grid_step + step_size * (i - half_n)
         grid_price_lower = grid_price_upper - step_size
 
-        flag = False if i in orders_boundaries_index else True
+        # инициализировать флаги из базы (s/b, если есть такие ордера, или False)
+        flag = orders_boundaries_data[i] if i in orders_boundaries_index else False
         grid_boundaries[i] = [grid_price_lower, grid_price_upper, flag]
 
-
         if grid_price_lower <= current_price < grid_price_upper:
-            await so_manager.set_grid_boundaries(symbol, [i, grid_price_lower, grid_price_upper])
+            await so_manager.set_grid_boundaries(symbol, [i, grid_price_lower, grid_price_upper, flag])
 
             print(f"Цена {symbol}: {current_price}")
             print(f'текущий предел {i}: {grid_boundaries[i]}')
@@ -226,75 +228,121 @@ async def start_trading(symbol, **kwargs):
 
         while True:
             _, current_price = await ws_price.get_price(symbol)
-            index_old, lower_old, upper_old = await so_manager.get_grid_boundaries(symbol)
+            index_old, lower_old, upper_old, side_old = await so_manager.get_grid_boundaries(symbol)
+
 
             if not (lower_old < current_price < upper_old):
-                orders_boundaries_index = [order['boundaries_index'] for order in await so_manager.get_orders(symbol)]
+                # orders = await so_manager.get_orders(symbol)
+                # orders_boundaries = {order['boundaries_index']: (order['order_type'], order['id']) for order in orders}
 
                 for index, (lower, upper, flag) in grid_boundaries.items():
-                    if lower <= current_price < upper and index_old < index:
-
+                    if lower <= current_price < upper and index_old < index:  # Поход цены вверх
                         print(f"\nДо изменения grid_boundaries: {grid_boundaries}")
                         print(f'index_old {index_old}, index {index}, {lower}, {upper}, {flag}')
 
-                        if flag:
+                        if not flag and side_old != 's':
                             # tp_price = upper - abs((upper - lower)) * 0.1
                             tp_price = upper
-                            # await place_order(symbol, "buy", upper, tp_price)
+
+                            # if await place_order(symbol, "buy", upper, tp_price)
+
                             logger.info(f"Покупка {grid_boundaries[index]} по цене {current_price}, TP: {tp_price}")
 
                             data_for_db = {
                                 'boundaries_index': index,
+                                'order_type': 'b',
                                 'open_time': datetime.fromtimestamp(int(time()))
                             }
+
+                            # orders = await so_manager.get_orders(symbol)
+                            # orders_data = [(order['boundaries_index'], order['id']) for order in orders if
+                            #                order['order_type'] == 'b' and order['boundaries_index'] < index]
+                            #
+                            # orders_id = [order[1] for order in orders_data]
+                            # orders_boundaries_index = [order[0] for order in orders_data]
+
+                            # Посмотреть, есть ли ордера на покупку ниже текущего индекса и удалить их
+                            orders = await so_manager.get_orders(symbol)
+                            orders_id, orders_boundaries_index = [], []
+
+                            for order in orders:
+                                if order['order_type'] == 'b' and index > order['boundaries_index']:
+                                    orders_id.append(order['id'])
+                                    orders_boundaries_index.append(order['boundaries_index'])
+
+                            print(f"\norders_data покупка(id, index): {orders_id, orders_boundaries_index}\n")
+
+                            await so_manager.del_orders(symbol, orders_id),
+                            await del_orders(symbol, session, orders_id)
+                            for index2 in orders_boundaries_index:
+                                grid_boundaries[index2][2] = False
 
                             order_id = await add_order(session, symbol, data_for_db)  # Добавить ордер в базу
                             data_for_db['id'] = order_id  # Добавить id ордера в память
                             await so_manager.update_order(symbol, data_for_db)  # Добавить ордер в память
-                            orders_boundaries_index.append(index)
+                            grid_boundaries[index][2] = 'b'
+                            # orders_boundaries[index] = ('b', order_id)
 
-                        await so_manager.set_grid_boundaries(symbol, [index, lower, upper])
+                        # for i in range(num_steps):
+                        #     flag = orders_boundaries_index[i] if i in orders_boundaries_index.keys() else False
+                        #     grid_boundaries[i][2] = flag  # Переписать все флаги с учетом открытых ордеров
 
-                        for i in range(num_steps):
-                            flag = False if i in orders_boundaries_index else True
-                            grid_boundaries[i][2] = flag
-
-                        grid_boundaries[index - 1][2] = False
+                        await so_manager.set_grid_boundaries(symbol, [index, lower, upper, 'b'])
 
                         print(f"после изменения grid_boundaries: {grid_boundaries}\n")
+
+                        # grid_boundaries[index - 1][2] = True  # Предыдущий шаг не должен быть активным
                         break
 
 
-                    elif lower < current_price <= upper and index_old > index:
-
+                    elif lower < current_price <= upper and index_old > index:  # Поход цены вниз
                         print(f"\nДо изменения grid_boundaries: {grid_boundaries}")
                         print(f'index_old {index_old}, index {index}, {lower}, {upper}, {flag}')
 
-                        if flag:
+                        if not flag and side_old != 'b':
                             # tp_price = lower + abs((upper - lower)) * 0.1
                             tp_price = lower
-                            # await place_order(symbol, "sell", lower, tp_price)
+
+                            # if await place_order(symbol, "sell", lower, tp_price)
+
                             logger.info(f"Продажа {grid_boundaries[index]} по цене {current_price}, TP: {tp_price}")
 
                             data_for_db = {
                                 'boundaries_index': index,
+                                'order_type': 's',
                                 'open_time': datetime.fromtimestamp(int(time()))
                             }
+
+                            orders = await so_manager.get_orders(symbol)
+                            orders_id, orders_boundaries_index = [], []
+
+                            for order in orders:
+                                if order['order_type'] == 's' and index < order['boundaries_index']:
+                                    orders_id.append(order['id'])
+                                    orders_boundaries_index.append(order['boundaries_index'])
+
+                            print(f"\norders_data продажа(id, index): {orders_id, orders_boundaries_index}\n")
+
+                            await so_manager.del_orders(symbol, orders_id),
+                            await del_orders(symbol, session, orders_id)
+                            for index2 in orders_boundaries_index:
+                                grid_boundaries[index2][2] = False
 
                             order_id = await add_order(session, symbol, data_for_db)  # Добавить ордер в базу
                             data_for_db['id'] = order_id  # Добавить id ордера в память
                             await so_manager.update_order(symbol, data_for_db)  # Добавить ордер в память
-                            orders_boundaries_index.append(index)
+                            grid_boundaries[index][2] = 's'
+                            # orders_boundaries[index] = ('s', order_id)
 
-                        await so_manager.set_grid_boundaries(symbol, [index, lower, upper])
+                        # for i in range(num_steps):
+                        #     flag = orders_boundaries_index[i] if i in orders_boundaries_index.keys() else False
+                        #     grid_boundaries[i][2] = flag  # Переписать все флаги с учетом открытых ордеров
 
-                        for i in range(num_steps):
-                            flag = False if i in orders_boundaries_index else True
-                            grid_boundaries[i][2] = flag
+                        await so_manager.set_grid_boundaries(symbol, [index, lower, upper, 's'])
 
-                        grid_boundaries[index + 1][2] = False
+                        print(f"после изменения grid_boundaries: {grid_boundaries}\n")
 
-                        print(f"После изменения grid_boundaries: {grid_boundaries}\n")
+                        # grid_boundaries[index + 1][2] = True  # Предыдущий шаг не должен быть активным
                         break
 
             await sleep(0.01)

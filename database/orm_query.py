@@ -35,10 +35,11 @@ async def update_state(session: AsyncSession, symbol_name: str, state: str):
     await session.commit()
 
 
-# # Удалить из БД последний ордер / или все ордера
-# async def del_orders(symbol_name: str, session: AsyncSession, orders_id: list = None):
-#     query = (OrderInfo.id.in_(orders_id)) if orders_id else OrderInfo.symbol.has(name=symbol_name)
-#     await session.execute(delete(OrderInfo).where(query))
+# Удалить из БД последний ордер / или все ордера
+async def del_orders(symbol_name: str, session: AsyncSession, orders_id: list = None):
+    query = (OrderInfo.id.in_(orders_id)) if orders_id else OrderInfo.symbol.has(name=symbol_name)
+    await session.execute(delete(OrderInfo).where(query))
+    await session.commit()
 
 
 # Обновить профит в БД по символу

@@ -101,7 +101,6 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
     @staticmethod
     def _create_default_symbol_data():
         return {'state': 'stop',
-                'grid_boundarie': [0.0, 0.0, False],
                 'profit': 0.0,
                 'orders': []}
 
@@ -116,6 +115,7 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
     async def set_grid_boundaries(self, symbol: str, grid_boundarie: list):
         async with self._lock:
             self._data[symbol]['grid_boundarie'] = grid_boundarie
+
 
     async def get_grid_boundaries(self, symbol: str):
         async with self._lock:

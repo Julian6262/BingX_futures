@@ -34,6 +34,7 @@ class OrderInfo(Base):
     __tablename__ = 'orders_info'
 
     boundaries_index: Mapped[int] = mapped_column()
+    order_type: Mapped[str] = mapped_column(String(1))
     symbol_id: Mapped[int] = mapped_column(ForeignKey('symbols.id'), index=True)
     open_time: Mapped[DateTime] = mapped_column(DateTime)
 
