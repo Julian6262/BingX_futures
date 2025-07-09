@@ -83,9 +83,9 @@ class WebSocketPrice:  # Класс для работы с ценами в ре�
         self._data = {}
         self._lock = Lock()
 
-    async def update_price(self, symbol: str, time: int, price: float):
+    async def update_price(self, symbol: str, price: float):
         async with self._lock:
-            self._data[symbol] = time, price
+            self._data[symbol] = price
 
     async def get_price(self, symbol: str):
         async with self._lock:
@@ -116,11 +116,9 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
         async with self._lock:
             self._data[symbol]['grid_boundarie'] = grid_boundarie
 
-
     async def get_grid_boundaries(self, symbol: str):
         async with self._lock:
             return self._data.get(symbol).get('grid_boundarie')
-
 
     async def set_state(self, symbol: str, state: str):
         async with self._lock:
@@ -129,8 +127,6 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
     async def get_state(self, symbol: str):
         async with self._lock:
             return self._data.get(symbol).get('state')
-
-
 
     async def update_order(self, symbol: str, data: dict):
         async with self._lock:
@@ -163,21 +159,17 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
         async with self._lock:
             return sum(symbol_data['profit'] for _, symbol_data in self._data.items())
 
-    async def get_last_order(self, symbol: str):
-        async with self._lock:
-            orders = self._data.get(symbol).get('orders')
-            return orders[-1] if orders else None
+    # async def get_last_order(self, symbol: str):
+    #     async with self._lock:
+    #         orders = self._data.get(symbol).get('orders')
+    #         return orders[-1] if orders else None
 
-    async def del_orders(self, symbol: str, orders_id: list = None):
+    async def del_orders(self, symbol: str, orders_id: list):
         async with self._lock:
-            if orders_id:
-                if orders := self._data.get(symbol).get('orders'):
-                    orders[:] = [order for order in orders if order['id'] not in orders_id]
+            if orders := self._data.get(symbol).get('orders'):
+                orders[:] = [order for order in orders if order['id'] not in orders_id]
 
-            else:
-                self._data.get(symbol).get('orders', []).clear()
-
-    async def get_summary(self, symbol: str, key: str):
-        async with self._lock:
-            orders = self._data.get(symbol).get('orders')
-            return sum(order[key] for order in orders) if orders else 0.0
+    # async def get_summary(self, symbol: str, key: str):
+    #     async with self._lock:
+    #         orders = self._data.get(symbol).get('orders')
+    #         return sum(order[key] for order in orders) if orders else 0.0

@@ -29,22 +29,26 @@ async def add_order(session: AsyncSession, symbol_name: str, data: dict):
         logger.error(f'Error adding order to DB: {e}')
 
 
+# Удалить из БД ордера по id
+async def del_orders(session: AsyncSession, orders_id: list):
+    try:
+        query = OrderInfo.id.in_(orders_id)
+        await session.execute(delete(OrderInfo).where(query))
+        await session.commit()
+
+    except Exception as e:
+        logger.error(f'Error del order from DB: {e}')
+
+
 # Изменить состояние у монеты
 async def update_state(session: AsyncSession, symbol_name: str, state: str):
     await session.execute(update(Symbol).where(Symbol.name == symbol_name).values(state=state))
     await session.commit()
 
 
-# Удалить из БД последний ордер / или все ордера
-async def del_orders(symbol_name: str, session: AsyncSession, orders_id: list = None):
-    query = (OrderInfo.id.in_(orders_id)) if orders_id else OrderInfo.symbol.has(name=symbol_name)
-    await session.execute(delete(OrderInfo).where(query))
-    await session.commit()
-
-
-# Обновить профит в БД по символу
-async def update_profit(symbol: str, session: AsyncSession, profit_diff: float):
-    await session.execute(update(Symbol).where(Symbol.name == symbol).values(profit=Symbol.profit + profit_diff))
+# # Обновить профит в БД по символу
+# async def update_profit(symbol: str, session: AsyncSession, profit_diff: float):
+#     await session.execute(update(Symbol).where(Symbol.name == symbol).values(profit=Symbol.profit + profit_diff))
 
 
 # Загружаем все ордера и symbols из БД в память

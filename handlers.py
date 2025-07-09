@@ -1,17 +1,15 @@
 from asyncio import gather
+
 from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 from aiohttp import ClientSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bingx_api.bingx_command import so_manager, task_manager, config_manager, price_upd_ws, start_trading, \
-    _send_request, _send_request111
+from bingx_api.bingx_command import so_manager, task_manager, config_manager, price_upd_ws, start_trading
 from common.config import config
 from database.orm_query import del_symbol, add_symbol, update_state
 from filters.chat_types import IsAdmin
-
-# from indicators.indicator_models import start_indicators
 
 router = Router()
 router.message.filter(IsAdmin(config.ADMIN))  # Фильтр по ID, кто может пользоваться ботом
@@ -95,6 +93,15 @@ async def start_cmd(message: Message, session: AsyncSession, http_session: Clien
         print(tasks)
     for tasks in so_manager._data.items():
         print(tasks)
+
+    # data_for_db = {
+    #     'boundaries_index': 1,
+    #     'order_type': 's',
+    #     'open_time': datetime.fromtimestamp(int(time()))
+    # }
+    #
+    # order_id = await add_order(session, "TONCOIN", data_for_db)  # Добавить ордер в базу
+    # logger.info(f"\nУспешно добавлен в базу index {index}")
 
     # async def get_current_orders(symbol: str, session: ClientSession):
     #     endpoint = '/openApi/cswap/v1/user/positions'
