@@ -56,8 +56,6 @@ async def main():
 
         symbols = so_manager.symbols
         tasks = (
-            # manage_listen_key(http_session),
-            # account_upd_ws(http_session),
             # *(start_indicators(symbol, http_session=http_session) for symbol in symbols),
             *(price_upd_ws(symbol, seconds=i) for i, symbol in enumerate(symbols)),
             *(start_trading(symbol, http_session=http_session, async_session=async_session) for symbol in symbols),

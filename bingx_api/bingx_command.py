@@ -16,53 +16,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.config import config
 from common.func import add_task
-from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager, ConfigManager
+from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, TaskManager, ConfigManager
 from database.orm_query import add_order, del_orders
 
 logger = getLogger('my_app')
 
 ws_price = WebSocketPrice()
 so_manager = SymbolOrderManager()
-account_manager = AccountManager()
 task_manager = TaskManager()
 config_manager = ConfigManager()
-
-
-# async def _send_request111(method: str, session: ClientSession, endpoint: str, params: dict):
-#     params['timestamp'] = int(time() * 1000)
-#     params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
-#     sign = hmac_new(config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
-#     url = f"{config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
-#
-#     # headers = {
-#     #     'X-BX-APIKEY': config.API_KEY,
-#     # }
-#     #
-#     # response = requests.request(method, url, headers=headers, data={})
-#     # return loads(response.text), "OK"
-#     try:
-#         async with session.post(url) as response:
-#             if response.status == 200:
-#                 if response.content_type == 'application/json':
-#                     data = await response.json()
-#                 elif response.content_type == 'text/plain':
-#                     data = loads(await response.text())
-#                 else:
-#                     return None, f"Неожиданный Content-Type send_request: {response.content_type}"
-#
-#                 return data, "OK"
-#
-#             else:
-#                 return None, f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}"
-#
-#     except ClientConnectorError as e:
-#         return None, f'Ошибка соединения с сетью (send_request): {e}'
-#
-#     except JSONDecodeError as e:
-#         return None, f"Ошибка декодирования send_request JSON: {e}"
-#
-#     except Exception as e:
-#         return None, f"Ошибка при выполнении запроса send_request: {e}"
 
 
 async def _send_request(method: str, session: ClientSession, endpoint: str, params: dict):
@@ -107,49 +69,6 @@ async def place_order(symbol: str, session: ClientSession, side: str, executed_q
     params = {"symbol": f'{symbol}-USD', "type": "MARKET", "side": side, "quantity": executed_qty}
 
     return await _send_request("POST", session, endpoint, params)
-
-
-async def manage_listen_key(http_session: ClientSession):
-    endpoint = '/openApi/user/auth/userDataStream'  # OK
-
-    listen_key, text = await _send_request("POST", http_session, endpoint, {})
-    if listen_key is None:
-        logger.error(f'Ошибка получения listen_key: {text}')
-        return
-
-    await account_manager.add_listen_key(listen_key['listenKey'])
-    while True:
-        await sleep(1200)
-        await _send_request("PUT", http_session, endpoint, {"listenKey": listen_key['listenKey']})
-
-
-# async def account_upd_ws(http_session: ClientSession):
-#     while not (listen_key := await account_manager.get_listen_key()):
-#         await sleep(0.3)  # Задержка перед попыткой получения ключа
-#
-#     channel = {"id": "1", "reqType": "sub", "dataType": "ACCOUNT_UPDATE"}  # NO OK !!!!!!!!!!!!!!
-#     url = f"{config.URL_WS}?listenKey={await account_manager.get_listen_key()}"
-#
-#     while True:  # Цикл для повторного подключения
-#         try:
-#             async with http_session.ws_connect(url) as ws:   # NO OK !!!!!!!!!!!!!!
-#                 logger.info(f"WebSocket connected account_upd_ws")
-#                 await ws.send_json(channel)
-#
-#                 async for message in ws:
-#                     try:
-#                         if 'e' in (data := loads(decompress(message.data).decode())):
-#                             await account_manager.update_balance_batch(data['a']['B'])
-#                             logger.info(f"Account_upd_ws: {data['a']}")
-#
-#                     except Exception as e:
-#                         logger.error(f"Непредвиденная ошибка account_upd_ws: {e}, сообщение: {message.data}")
-#
-#         except Exception as e:
-#             logger.error(f"Критическая ошибка account_upd_ws: {e}")
-#
-#         logger.error(f"account_upd_ws завершился. Переподключение через 5 секунд.")
-#         await sleep(5)
 
 
 @add_task(task_manager, so_manager, 'price_upd')
@@ -232,18 +151,15 @@ async def _delete_orders(symbol: str, session: AsyncSession, grid_boundaries: di
 
     if orders_id:
         await so_manager.del_orders(symbol, orders_id),
-        logger.info(f"\nУспешно удален из памяти\n")
-
         await del_orders(session, orders_id)
-        logger.info(f"\nУспешно удален из базы\n")
 
         for i in orders_boundaries_index:
             grid_boundaries[i][2] = False
 
         if side == 'b':
-            logger.info(f"\nВсе удалено, покупка(id, index): {orders_id, orders_boundaries_index}\n")
+            logger.info(f"\nУдалено, покупка(id, index): {orders_id, orders_boundaries_index}\n")
         else:
-            logger.info(f"\nВсе удалено, продажа(id, index): {orders_id, orders_boundaries_index}\n")
+            logger.info(f"\nУдалено, продажа(id, index): {orders_id, orders_boundaries_index}\n")
 
     else:
         logger.info(f"\nНет ордеров для удаления\n")
@@ -265,11 +181,31 @@ async def _open_order(symbol: str, session: AsyncSession, grid_boundaries: dict,
     logger.info(f"\nУспешно добавлен в память index, order_id: {index, order_id}\n")
 
     grid_boundaries[index][2] = side
-    # orders_boundaries[index] = ('b', order_id)
 
-    # for i in range(num_steps):
-    #     flag = orders_boundaries_index[i] if i in orders_boundaries_index.keys() else False
-    #     grid_boundaries[i][2] = flag  # Переписать все флаги с учетом открытых ордеров
+
+async def _handle_midpoint_grid_adjustment(symbol: str, index_old, lower_old, upper_old, side_old, current_price):
+    midpoint = (lower_old + upper_old) / 2
+    log_message_prefix = None
+
+    if side_old == 'b' and current_price >= midpoint:
+        log_message_prefix = "b"
+    elif side_old == 's' and current_price <= midpoint:
+        log_message_prefix = "s"
+
+    if log_message_prefix:
+        await so_manager.set_grid_boundaries(symbol, [index_old, lower_old, upper_old, False])
+        logger.info(f"{log_message_prefix} индекс {index_old} середина, цена {current_price}\n")
+
+
+async def _handle_order_actions(symbol, session, grid_boundaries, index_old, index, price, side_old, tp, flag, side):
+    if not flag and side_old != ('s' if side == 'b' else 'b'):
+        await _delete_orders(symbol, session, grid_boundaries, index, side)
+
+        # if await place_order(symbol, "buy", upper, tp_price)
+        await _open_order(symbol, session, grid_boundaries, index, side)
+        logger.info(f"{side} {index}, {grid_boundaries[index]} по цене {price}, TP: {tp}")
+
+        print(f"после изменения grid_boundaries: {grid_boundaries}\n")
 
 
 @add_task(task_manager, so_manager, 'start_trading')
@@ -292,52 +228,33 @@ async def start_trading(symbol, **kwargs):
         grid_boundaries = await _init_virtual_grid(symbol, num_steps, step_size, init_grid_step)
 
         while True:
-            current_price = await ws_price.get_price(symbol)
+            price = await ws_price.get_price(symbol)
             index_old, lower_old, upper_old, side_old = await so_manager.get_grid_boundaries(symbol)
 
-            if not (lower_old < current_price < upper_old):
+            # разрешаем открыть ордер при пересечении цены выше/ниже середины предыдущей grid boundaries
+            await _handle_midpoint_grid_adjustment(symbol, index_old, lower_old, upper_old, side_old, price)
+
+            if not (lower_old < price < upper_old):  # Если текущая цена ВНЕ старых границ
                 for index, (lower, upper, flag) in grid_boundaries.items():
-                    if lower <= current_price < upper and index_old < index:  # Поход цены вверх
-                        print(f"\nДо изменения grid_boundaries: {grid_boundaries}")
-                        print(f'index_old {index_old}, index {index}, {lower}, {upper}, {flag}')
 
-                        if not flag and side_old != 's':
-                            # tp_price = upper - abs((upper - lower)) * 0.1
-                            tp_price = upper
-
-                            # if await place_order(symbol, "buy", upper, tp_price)
-
-                            logger.info(f"Покупка {grid_boundaries[index]} по цене {current_price}, TP: {tp_price}")
-
-                            await _delete_orders(symbol, session, grid_boundaries, index, 'b')
-                            await _open_order(symbol, session, grid_boundaries, index, 'b')
+                    # Поход цены вверх в новую сетку (индекс новой сетки больше старой)
+                    if lower <= price < upper and index_old < index:
+                        tp_price = upper
+                        # tp_price = upper - abs((upper - lower)) * 0.1
+                        await _handle_order_actions(symbol, session, grid_boundaries, index_old, index, price,
+                                                    side_old, tp_price, flag, 'b')
 
                         await so_manager.set_grid_boundaries(symbol, [index, lower, upper, 'b'])
-
-                        print(f"после изменения grid_boundaries: {grid_boundaries}\n")
-
                         break
 
-
-                    elif lower < current_price <= upper and index_old > index:  # Поход цены вниз
-                        print(f"\nДо изменения grid_boundaries: {grid_boundaries}")
-                        print(f'index_old {index_old}, index {index}, {lower}, {upper}, {flag}')
-
-                        if not flag and side_old != 'b':
-                            # tp_price = lower + abs((upper - lower)) * 0.1
-                            tp_price = lower
-
-                            # if await place_order(symbol, "sell", lower, tp_price)
-
-                            logger.info(f"Продажа {grid_boundaries[index]} по цене {current_price}, TP: {tp_price}")
-
-                            await _delete_orders(symbol, session, grid_boundaries, index, 's')
-                            await _open_order(symbol, session, grid_boundaries, index, 's')
+                    # Поход цены вниз в новую сетку (индекс новой сетки меньше старой)
+                    elif lower < price <= upper and index_old > index:
+                        tp_price = lower
+                        # tp_price = lower + abs((upper - lower)) * 0.1
+                        await _handle_order_actions(symbol, session, grid_boundaries, index_old, index, price,
+                                                    side_old, tp_price, flag, 's')
 
                         await so_manager.set_grid_boundaries(symbol, [index, lower, upper, 's'])
-
-                        print(f"после изменения grid_boundaries: {grid_boundaries}\n")
-
                         break
 
             await sleep(0.01)

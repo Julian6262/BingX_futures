@@ -25,39 +25,6 @@ class ConfigManager:
             return self._data.get(symbol).get(key)
 
 
-class AccountManager:  # Класс для работы с данными счета
-    def __init__(self):
-        self._balance = {}
-        self._usdt_block = 'unblock'
-        self._listen_key = None
-        self._lock = Lock()
-
-    async def update_balance_batch(self, batch_data: list):
-        async with self._lock:
-            for data in batch_data:
-                self._balance[data['a']] = float(data['wb'])
-
-    async def get_balance(self, symbol: str):
-        async with self._lock:
-            return self._balance.get(symbol, 0.0)
-
-    async def add_listen_key(self, listen_key: str):
-        async with self._lock:
-            self._listen_key = listen_key
-
-    async def get_listen_key(self):
-        async with self._lock:
-            return self._listen_key
-
-    async def set_usdt_block(self, state: str):
-        async with self._lock:
-            self._usdt_block = state
-
-    async def get_usdt_block(self):
-        async with self._lock:
-            return self._usdt_block
-
-
 class TaskManager:  # Класс для работы с задачами
     def __init__(self):
         self._tasks = defaultdict(list)
@@ -159,17 +126,7 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
         async with self._lock:
             return sum(symbol_data['profit'] for _, symbol_data in self._data.items())
 
-    # async def get_last_order(self, symbol: str):
-    #     async with self._lock:
-    #         orders = self._data.get(symbol).get('orders')
-    #         return orders[-1] if orders else None
-
     async def del_orders(self, symbol: str, orders_id: list):
         async with self._lock:
             if orders := self._data.get(symbol).get('orders'):
                 orders[:] = [order for order in orders if order['id'] not in orders_id]
-
-    # async def get_summary(self, symbol: str, key: str):
-    #     async with self._lock:
-    #         orders = self._data.get(symbol).get('orders')
-    #         return sum(order[key] for order in orders) if orders else 0.0

@@ -46,11 +46,6 @@ async def update_state(session: AsyncSession, symbol_name: str, state: str):
     await session.commit()
 
 
-# # Обновить профит в БД по символу
-# async def update_profit(symbol: str, session: AsyncSession, profit_diff: float):
-#     await session.execute(update(Symbol).where(Symbol.name == symbol).values(profit=Symbol.profit + profit_diff))
-
-
 # Загружаем все ордера и symbols из БД в память
 async def load_from_db(session: AsyncSession, so_manager, config_manager):
     query = select(Symbol).options(selectinload(Symbol.orders))
