@@ -147,22 +147,16 @@ async def _delete_orders(symbol: str, session: AsyncSession, grid_boundaries: di
             orders_id.append(order['id'])
             orders_boundaries_index.append(order['boundaries_index'])
 
-    logger.info(f'\nПопытка закрыть ордер: {orders_id, orders_boundaries_index}\n')
-
     if orders_id:
+        logger.info(f'\nПопытка закрыть ордер: {orders_id, orders_boundaries_index}\n')
+
         await so_manager.del_orders(symbol, orders_id),
         await del_orders(session, orders_id)
 
         for i in orders_boundaries_index:
             grid_boundaries[i][2] = False
 
-        if side == 'b':
-            logger.info(f"\nУдалено, покупка(id, index): {orders_id, orders_boundaries_index}\n")
-        else:
-            logger.info(f"\nУдалено, продажа(id, index): {orders_id, orders_boundaries_index}\n")
-
-    else:
-        logger.info(f"\nНет ордеров для удаления\n")
+        logger.info(f"\nУдалено, {side} (id, index): {orders_id, orders_boundaries_index}\n")
 
 
 # Посмотреть, есть ли ордера на покупку ниже b (выше s) текущего индекса и удалить их
@@ -194,13 +188,13 @@ async def _handle_midpoint_grid_adjustment(symbol: str, index_old, lower_old, up
 
     if log_message_prefix:
         await so_manager.set_grid_boundaries(symbol, [index_old, lower_old, upper_old, False])
-        logger.info(f"{log_message_prefix} индекс {index_old} середина, цена {current_price}\n")
+        # logger.info(f"{log_message_prefix} индекс {index_old} середина, цена {current_price}\n")
 
 
-async def _handle_order_actions(symbol, session, grid_boundaries, index_old, index, price, side_old, tp, flag, side):
-    if not flag and side_old != ('s' if side == 'b' else 'b'):
-        await _delete_orders(symbol, session, grid_boundaries, index, side)
+async def _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, tp, flag, side):
+    await _delete_orders(symbol, session, grid_boundaries, index, side)
 
+    if flag != side and side_old != ('s' if side == 'b' else 'b'):
         # if await place_order(symbol, "buy", upper, tp_price)
         await _open_order(symbol, session, grid_boundaries, index, side)
         logger.info(f"{side} {index}, {grid_boundaries[index]} по цене {price}, TP: {tp}")
@@ -241,8 +235,8 @@ async def start_trading(symbol, **kwargs):
                     if lower <= price < upper and index_old < index:
                         tp_price = upper
                         # tp_price = upper - abs((upper - lower)) * 0.1
-                        await _handle_order_actions(symbol, session, grid_boundaries, index_old, index, price,
-                                                    side_old, tp_price, flag, 'b')
+                        await _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, tp_price,
+                                                    flag, 'b')
 
                         await so_manager.set_grid_boundaries(symbol, [index, lower, upper, 'b'])
                         break
@@ -251,8 +245,8 @@ async def start_trading(symbol, **kwargs):
                     elif lower < price <= upper and index_old > index:
                         tp_price = lower
                         # tp_price = lower + abs((upper - lower)) * 0.1
-                        await _handle_order_actions(symbol, session, grid_boundaries, index_old, index, price,
-                                                    side_old, tp_price, flag, 's')
+                        await _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, tp_price,
+                                                    flag, 's')
 
                         await so_manager.set_grid_boundaries(symbol, [index, lower, upper, 's'])
                         break
