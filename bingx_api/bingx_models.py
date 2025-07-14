@@ -79,13 +79,13 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
                 self._data[symbol.name]['profit'] = symbol.profit
                 self._data[symbol.name]['orders'] = orders
 
-    async def set_grid_boundaries(self, symbol: str, grid_boundarie: list):
+    async def set_grid_boundaries(self, symbol: str, grid_boundaries: list):
         async with self._lock:
-            self._data[symbol]['grid_boundarie'] = grid_boundarie
+            self._data[symbol]['grid_boundaries'] = grid_boundaries
 
     async def get_grid_boundaries(self, symbol: str):
         async with self._lock:
-            return self._data.get(symbol).get('grid_boundarie')
+            return self._data.get(symbol).get('grid_boundaries')
 
     async def set_state(self, symbol: str, state: str):
         async with self._lock:

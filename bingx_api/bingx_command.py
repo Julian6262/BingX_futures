@@ -1,5 +1,4 @@
 from asyncio import sleep
-from decimal import Decimal
 from datetime import datetime
 from gzip import decompress
 from time import time
@@ -8,9 +7,9 @@ from hashlib import sha256
 import websockets
 
 import requests
-from aiohttp import ClientSession, ClientConnectorError
+from aiohttp import ClientSession
 from logging import getLogger
-from json import loads, dumps, JSONDecodeError
+from json import loads, dumps
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,48 +26,50 @@ task_manager = TaskManager()
 config_manager = ConfigManager()
 
 
-async def _send_request(method: str, session: ClientSession, endpoint: str, params: dict):
+async def _send_request(method: str, endpoint: str, params: dict, session: ClientSession = None):
     params['timestamp'] = int(time() * 1000)
     params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
     sign = hmac_new(config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
     url = f"{config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
 
-    # headers = {
-    #     'X-BX-APIKEY': config.API_KEY,
-    # }
-    #
-    # response = requests.request(method, url, headers=headers, data={})
-    # return loads(response.text), "OK"
-    try:
-        async with session.request(method, url) as response:
-            if response.status == 200:
-                if response.content_type == 'application/json':
-                    data = await response.json()
-                elif response.content_type == 'text/plain':
-                    data = loads(await response.text())
+    if session:  # В coin-M через aiohttp не работает
+        try:
+            async with session.request(method, url) as response:
+                if response.status == 200:
+                    if response.content_type == 'application/json':
+                        data = await response.json()
+                    elif response.content_type == 'text/plain':
+                        data = loads(await response.text())
+                    else:
+                        return None, f"Неожиданный Content-Type send_request: {response.content_type}"
+
+                    return data, "OK"
+
                 else:
-                    return None, f"Неожиданный Content-Type send_request: {response.content_type}"
+                    return None, f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}"
 
-                return data, "OK"
+        except Exception as e:
+            return None, f"Ошибка при выполнении запроса send_request: {e}"
 
-            else:
-                return None, f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}"
-
-    except ClientConnectorError as e:
-        return None, f'Ошибка соединения с сетью (send_request): {e}'
-
-    except JSONDecodeError as e:
-        return None, f"Ошибка декодирования send_request JSON: {e}"
-
-    except Exception as e:
-        return None, f"Ошибка при выполнении запроса send_request: {e}"
+    else:
+        response = requests.request(method, url, headers=config.HEADERS)
+        return loads(response.text), "OK"
 
 
-async def place_order(symbol: str, session: ClientSession, side: str, executed_qty: float | Decimal):
+async def place_order(symbol: str, side: str, executed_qty: float, tp: float, session: ClientSession = None):
     endpoint = '/openApi/cswap/v1/trade/order'
-    params = {"symbol": f'{symbol}-USD', "type": "MARKET", "side": side, "quantity": executed_qty}
+    take_profit_dict = {"type": "TAKE_PROFIT_MARKET", "stopPrice": tp, "workingType": "MARK_PRICE"}
+    take_profit = dumps(take_profit_dict)
 
-    return await _send_request("POST", session, endpoint, params)
+    params = {"symbol": f'{symbol}-USD',
+              "side": "BUY" if side == "b" else "SELL",
+              "positionSide": "LONG" if side == "b" else "SHORT",
+              "type": "MARKET",
+              "quantity": executed_qty,
+              "takeProfit": take_profit,
+              }
+
+    return await _send_request("POST", endpoint, params, session)
 
 
 @add_task(task_manager, so_manager, 'price_upd')
@@ -148,7 +149,7 @@ async def _delete_orders(symbol: str, session: AsyncSession, grid_boundaries: di
             orders_boundaries_index.append(order['boundaries_index'])
 
     if orders_id:
-        logger.info(f'\nПопытка закрыть ордер: {orders_id, orders_boundaries_index}\n')
+        logger.info(f'\nПопытка закрыть ордер: {orders_id, orders_boundaries_index}')
 
         await so_manager.del_orders(symbol, orders_id),
         await del_orders(session, orders_id)
@@ -191,13 +192,23 @@ async def _handle_midpoint_grid_adjustment(symbol: str, index_old, lower_old, up
         # logger.info(f"{log_message_prefix} индекс {index_old} середина, цена {current_price}\n")
 
 
-async def _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, tp, flag, side):
+async def _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, tp, flag, side, execute_qty):
     await _delete_orders(symbol, session, grid_boundaries, index, side)
 
     if flag != side and side_old != ('s' if side == 'b' else 'b'):
-        # if await place_order(symbol, "buy", upper, tp_price)
+        data, text = await place_order(symbol, side, executed_qty=execute_qty, tp=tp)
+
+        if not data.get("orderId"):
+            report = f'\n\nОрдер НЕ открыт {symbol}: {text} {data}\n'
+            logger.error(report)
+            return report
+
         await _open_order(symbol, session, grid_boundaries, index, side)
-        logger.info(f"{side} {index}, {grid_boundaries[index]} по цене {price}, TP: {tp}")
+
+        report = f'\n\nОрдер {symbol} по цене {price} tp {tp}: {text} {data}\n'
+        logger.info(report)
+
+        # logger.info(f"{side} {index}, {grid_boundaries[index]} по цене {price}, TP: {tp}")
 
         print(f"после изменения grid_boundaries: {grid_boundaries}\n")
 
@@ -233,20 +244,20 @@ async def start_trading(symbol, **kwargs):
 
                     # Поход цены вверх в новую сетку (индекс новой сетки больше старой)
                     if lower <= price < upper and index_old < index:
-                        tp_price = upper
-                        # tp_price = upper - abs((upper - lower)) * 0.1
+                        tp_price = upper - 0.0001
+                        # tp_price = upper - abs((upper - lower)) * 0.05
                         await _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, tp_price,
-                                                    flag, 'b')
+                                                    flag, 'b', 1)
 
                         await so_manager.set_grid_boundaries(symbol, [index, lower, upper, 'b'])
                         break
 
                     # Поход цены вниз в новую сетку (индекс новой сетки меньше старой)
                     elif lower < price <= upper and index_old > index:
-                        tp_price = lower
-                        # tp_price = lower + abs((upper - lower)) * 0.1
+                        tp_price = lower + 0.0001
+                        # tp_price = lower + abs((upper - lower)) * 0.05
                         await _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, tp_price,
-                                                    flag, 's')
+                                                    flag, 's', 1)
 
                         await so_manager.set_grid_boundaries(symbol, [index, lower, upper, 's'])
                         break
