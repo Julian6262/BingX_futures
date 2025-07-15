@@ -103,7 +103,7 @@ async def price_upd_ws(symbol, **kwargs):
 async def _init_virtual_grid(symbol: str, num_steps: int, step_size: float, init_grid_step: float):
     current_price = await ws_price.get_price(symbol)
 
-    half_n = num_steps // 2
+    half_n = num_steps // 2 - 30
     grid_boundaries = {}
 
     orders = await so_manager.get_orders(symbol)
@@ -149,7 +149,7 @@ async def _delete_orders(symbol: str, session: AsyncSession, grid_boundaries: di
             orders_boundaries_index.append(order['boundaries_index'])
 
     if orders_id:
-        logger.info(f'\nПопытка закрыть ордер: {orders_id, orders_boundaries_index}')
+        # logger.info(f'\nПопытка закрыть ордер: {orders_id, orders_boundaries_index}')
 
         await so_manager.del_orders(symbol, orders_id),
         await del_orders(session, orders_id)
@@ -157,7 +157,7 @@ async def _delete_orders(symbol: str, session: AsyncSession, grid_boundaries: di
         for i in orders_boundaries_index:
             grid_boundaries[i][2] = False
 
-        logger.info(f"\nУдалено, {side} (id, index): {orders_id, orders_boundaries_index}\n")
+        logger.info(f"\nУдалено {symbol}, сторона - {side} : {orders_id, orders_boundaries_index}\n")
 
 
 # Посмотреть, есть ли ордера на покупку ниже b (выше s) текущего индекса и удалить их
@@ -169,11 +169,11 @@ async def _open_order(symbol: str, session: AsyncSession, grid_boundaries: dict,
     }
 
     order_id = await add_order(session, symbol, data_for_db)  # Добавить ордер в базу
-    logger.info(f"\nУспешно добавлен в базу index {index}\n")
+    # logger.info(f"\nУспешно добавлен в базу index {index}\n")
 
     data_for_db['id'] = order_id  # Добавить id ордера в память
     await so_manager.update_order(symbol, data_for_db)  # Добавить ордер в память
-    logger.info(f"\nУспешно добавлен в память index, order_id: {index, order_id}\n")
+    logger.info(f"\nУспешно добавлен {symbol}: {index, order_id}\n")
 
     grid_boundaries[index][2] = side
 
@@ -225,7 +225,7 @@ async def start_trading(symbol, **kwargs):
 
         logger.info(f'Запуск торговли {symbol}')
 
-        num_steps = 40
+        num_steps = 150
 
         init_grid_step = await config_manager.get_data(symbol, 'init_grid_step')
         step_size = init_grid_step * await config_manager.get_data(symbol, 'grid_size')  # grid size в %
