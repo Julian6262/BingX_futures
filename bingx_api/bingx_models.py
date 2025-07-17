@@ -14,6 +14,7 @@ class ConfigManager:
                 self.symbols.append(data.symbol_name)
                 self._data[data.symbol_name]['init_grid_step'] = data.init_grid_step
                 self._data[data.symbol_name]['grid_size'] = data.grid_size
+                self._data[data.symbol_name]['price_step'] = data.price_step
                 self._data[data.symbol_name]['lot_b'] = data.lot_b
                 self._data[data.symbol_name]['lot_s'] = data.lot_s
 

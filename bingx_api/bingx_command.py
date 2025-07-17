@@ -100,15 +100,36 @@ async def price_upd_ws(symbol, **kwargs):
         await sleep(5)  # Пауза перед повторным подключением
 
 
-async def _init_virtual_grid(symbol: str, num_steps: int, step_size: float, init_grid_step: float):
+async def _init_virtual_grid(symbol: str):
     current_price = await ws_price.get_price(symbol)
 
+    num_steps = 150
     half_n = num_steps // 2 - 30
     grid_boundaries = {}
 
+    grid_boundaries_adaptive = {}
+
+    init_grid_step = await config_manager.get_data(symbol, 'init_grid_step')
+    step_size = init_grid_step * await config_manager.get_data(symbol, 'grid_size')  # grid size в %
+
+    # Получить индексы существующих ордеров
     orders = await so_manager.get_orders(symbol)
     orders_boundaries_data = {order['boundaries_index']: order['order_type'] for order in orders}
     orders_boundaries_index = orders_boundaries_data.keys()
+
+    # ------------------
+    grid_size = await config_manager.get_data(symbol, 'grid_size')
+    grid_price_upper_adaptive = init_grid_step
+
+    for i in range(30):
+        grid_price_lower_adaptive = grid_price_upper_adaptive
+        grid_price_upper_adaptive += grid_price_upper_adaptive * grid_size
+
+        flag = orders_boundaries_data[i] if i in orders_boundaries_index else False
+        grid_boundaries_adaptive[i] = [grid_price_lower_adaptive, grid_price_upper_adaptive, flag]
+
+    print(f"Цены сетки адаптив для {symbol}: {grid_boundaries_adaptive}")
+    # ------------------
 
     for i in range(num_steps):
         grid_price_upper = init_grid_step + step_size * (i - half_n)
@@ -119,8 +140,6 @@ async def _init_virtual_grid(symbol: str, num_steps: int, step_size: float, init
         grid_boundaries[i] = [grid_price_lower, grid_price_upper, flag]
 
         if grid_price_lower <= current_price < grid_price_upper:
-            # index = i
-            # await _delete_orders(symbol, async_session, grid_boundaries, i, 'b')
             await so_manager.set_grid_boundaries(symbol, [i, grid_price_lower, grid_price_upper, flag])
 
             print(f"Цена {symbol}: {current_price}")
@@ -149,15 +168,13 @@ async def _delete_orders(symbol: str, session: AsyncSession, grid_boundaries: di
             orders_boundaries_index.append(order['boundaries_index'])
 
     if orders_id:
-        # logger.info(f'\nПопытка закрыть ордер: {orders_id, orders_boundaries_index}')
-
         await so_manager.del_orders(symbol, orders_id),
         await del_orders(session, orders_id)
 
         for i in orders_boundaries_index:
             grid_boundaries[i][2] = False
 
-        logger.info(f"\nУдалено {symbol}, сторона - {side} : {orders_id, orders_boundaries_index}\n")
+        logger.info(f"\nУдалено {symbol}, сторона - {side} : {orders_boundaries_index}\n")
 
 
 # Посмотреть, есть ли ордера на покупку ниже b (выше s) текущего индекса и удалить их
@@ -169,11 +186,10 @@ async def _open_order(symbol: str, session: AsyncSession, grid_boundaries: dict,
     }
 
     order_id = await add_order(session, symbol, data_for_db)  # Добавить ордер в базу
-    # logger.info(f"\nУспешно добавлен в базу index {index}\n")
 
     data_for_db['id'] = order_id  # Добавить id ордера в память
     await so_manager.update_order(symbol, data_for_db)  # Добавить ордер в память
-    logger.info(f"\nУспешно добавлен {symbol}: {index, order_id}\n")
+    logger.info(f"\nУспешно добавлен {symbol}: {index}\n")
 
     grid_boundaries[index][2] = side
 
@@ -189,14 +205,17 @@ async def _handle_midpoint_grid_adjustment(symbol: str, index_old, lower_old, up
 
     if log_message_prefix:
         await so_manager.set_grid_boundaries(symbol, [index_old, lower_old, upper_old, False])
-        # logger.info(f"{log_message_prefix} индекс {index_old} середина, цена {current_price}\n")
 
 
-async def _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, tp, flag, side, execute_qty):
+async def _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, flag, bound, side):
     await _delete_orders(symbol, session, grid_boundaries, index, side)
 
     if flag != side and side_old != ('s' if side == 'b' else 'b'):
-        data, text = await place_order(symbol, side, executed_qty=execute_qty, tp=tp)
+        lot = await config_manager.get_data(symbol, 'lot_b' if side == 'b' else 'lot_s')
+        price_step = await config_manager.get_data(symbol, 'price_step')
+        tp = bound + (-price_step if side == 'b' else price_step)
+
+        data, text = await place_order(symbol, side, executed_qty=lot, tp=tp)
 
         if not data.get("orderId"):
             report = f'\n\nОрдер НЕ открыт {symbol}: {text} {data}\n'
@@ -205,10 +224,8 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
 
         await _open_order(symbol, session, grid_boundaries, index, side)
 
-        report = f'\n\nОрдер {symbol} по цене {price} tp {tp}: {text} {data}\n'
+        report = f'\nОрдер {symbol} по цене {price} tp {tp}: {text} {data}\n'
         logger.info(report)
-
-        # logger.info(f"{side} {index}, {grid_boundaries[index]} по цене {price}, TP: {tp}")
 
         print(f"после изменения grid_boundaries: {grid_boundaries}\n")
 
@@ -225,12 +242,7 @@ async def start_trading(symbol, **kwargs):
 
         logger.info(f'Запуск торговли {symbol}')
 
-        num_steps = 150
-
-        init_grid_step = await config_manager.get_data(symbol, 'init_grid_step')
-        step_size = init_grid_step * await config_manager.get_data(symbol, 'grid_size')  # grid size в %
-
-        grid_boundaries = await _init_virtual_grid(symbol, num_steps, step_size, init_grid_step)
+        grid_boundaries = await _init_virtual_grid(symbol)
 
         while True:
             price = await ws_price.get_price(symbol)
@@ -244,21 +256,15 @@ async def start_trading(symbol, **kwargs):
 
                     # Поход цены вверх в новую сетку (индекс новой сетки больше старой)
                     if lower <= price < upper and index_old < index:
-                        tp_price = upper - 0.0001
-                        # tp_price = upper - abs((upper - lower)) * 0.05
-                        await _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, tp_price,
-                                                    flag, 'b', 1)
-
+                        await _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, flag,
+                                                    upper, 'b')
                         await so_manager.set_grid_boundaries(symbol, [index, lower, upper, 'b'])
                         break
 
                     # Поход цены вниз в новую сетку (индекс новой сетки меньше старой)
                     elif lower < price <= upper and index_old > index:
-                        tp_price = lower + 0.0001
-                        # tp_price = lower + abs((upper - lower)) * 0.05
-                        await _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, tp_price,
-                                                    flag, 's', 1)
-
+                        await _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, flag,
+                                                    lower, 's')
                         await so_manager.set_grid_boundaries(symbol, [index, lower, upper, 's'])
                         break
 
