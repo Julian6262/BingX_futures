@@ -103,37 +103,24 @@ async def price_upd_ws(symbol, **kwargs):
 async def _init_virtual_grid(symbol: str):
     current_price = await ws_price.get_price(symbol)
 
-    num_steps = 150
-    half_n = num_steps // 2 - 30
+    num_steps = 200
+    if symbol == 'TRX':
+        num_steps = 300
+
     grid_boundaries = {}
-
-    grid_boundaries_adaptive = {}
-
-    init_grid_step = await config_manager.get_data(symbol, 'init_grid_step')
-    step_size = init_grid_step * await config_manager.get_data(symbol, 'grid_size')  # grid size в %
 
     # Получить индексы существующих ордеров
     orders = await so_manager.get_orders(symbol)
     orders_boundaries_data = {order['boundaries_index']: order['order_type'] for order in orders}
     orders_boundaries_index = orders_boundaries_data.keys()
 
-    # ------------------
+    init_grid_step = await config_manager.get_data(symbol, 'init_grid_step')
     grid_size = await config_manager.get_data(symbol, 'grid_size')
-    grid_price_upper_adaptive = init_grid_step
-
-    for i in range(30):
-        grid_price_lower_adaptive = grid_price_upper_adaptive
-        grid_price_upper_adaptive += grid_price_upper_adaptive * grid_size
-
-        flag = orders_boundaries_data[i] if i in orders_boundaries_index else False
-        grid_boundaries_adaptive[i] = [grid_price_lower_adaptive, grid_price_upper_adaptive, flag]
-
-    print(f"Цены сетки адаптив для {symbol}: {grid_boundaries_adaptive}")
-    # ------------------
+    grid_price_upper = init_grid_step
 
     for i in range(num_steps):
-        grid_price_upper = init_grid_step + step_size * (i - half_n)
-        grid_price_lower = grid_price_upper - step_size
+        grid_price_lower = grid_price_upper
+        grid_price_upper += grid_price_upper * grid_size
 
         # инициализировать флаги из базы (s/b, если есть такие ордера, или False)
         flag = orders_boundaries_data[i] if i in orders_boundaries_index else False
@@ -211,21 +198,21 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
     await _delete_orders(symbol, session, grid_boundaries, index, side)
 
     if flag != side and side_old != ('s' if side == 'b' else 'b'):
-        lot = await config_manager.get_data(symbol, 'lot_b' if side == 'b' else 'lot_s')
-        price_step = await config_manager.get_data(symbol, 'price_step')
-        tp = bound + (-price_step if side == 'b' else price_step)
+        if lot := await config_manager.get_data(symbol, 'lot_b' if side == 'b' else 'lot_s'):
+            price_step = await config_manager.get_data(symbol, 'price_step')
+            tp = bound + (-price_step if side == 'b' else price_step)
 
-        data, text = await place_order(symbol, side, executed_qty=lot, tp=tp)
+            data, text = await place_order(symbol, side, executed_qty=lot, tp=tp)
 
-        if not data.get("orderId"):
-            report = f'\n\nОрдер НЕ открыт {symbol}: {text} {data}\n'
-            logger.error(report)
-            return report
+            if not data.get("orderId"):
+                report = f'\n\nОрдер НЕ открыт {symbol}: {text} {data}\n'
+                logger.error(report)
+                return report
 
-        await _open_order(symbol, session, grid_boundaries, index, side)
+            await _open_order(symbol, session, grid_boundaries, index, side)
 
-        report = f'\nОрдер {symbol} по цене {price} tp {tp}: {text} {data}\n'
-        logger.info(report)
+            report = f'\nОрдер {symbol} по цене {price} tp {tp}: {text} {data}\n'
+            logger.info(report)
 
         print(f"после изменения grid_boundaries: {grid_boundaries}\n")
 
