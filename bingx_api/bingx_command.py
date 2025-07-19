@@ -14,7 +14,7 @@ from json import loads, dumps
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.config import config
-from common.func import add_task
+from common.func import add_task, get_decimal_places
 from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, TaskManager, ConfigManager
 from database.orm_query import add_order, del_orders
 
@@ -102,6 +102,7 @@ async def price_upd_ws(symbol, **kwargs):
 
 async def _init_virtual_grid(symbol: str):
     current_price = await ws_price.get_price(symbol)
+    decimal_places = get_decimal_places(await config_manager.get_data(symbol, 'price_step'))
 
     num_steps = 200
     if symbol == 'TRX':
@@ -121,6 +122,8 @@ async def _init_virtual_grid(symbol: str):
     for i in range(num_steps):
         grid_price_lower = grid_price_upper
         grid_price_upper += grid_price_upper * grid_size
+
+        grid_price_upper = round(grid_price_upper, decimal_places)
 
         # инициализировать флаги из базы (s/b, если есть такие ордера, или False)
         flag = orders_boundaries_data[i] if i in orders_boundaries_index else False
@@ -199,10 +202,7 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
 
     if flag != side and side_old != ('s' if side == 'b' else 'b'):
         if lot := await config_manager.get_data(symbol, 'lot_b' if side == 'b' else 'lot_s'):
-            price_step = await config_manager.get_data(symbol, 'price_step')
-            tp = bound + (-price_step if side == 'b' else price_step)
-
-            data, text = await place_order(symbol, side, executed_qty=lot, tp=tp)
+            data, text = await place_order(symbol, side, executed_qty=lot, tp=bound)
 
             if not data.get("orderId"):
                 report = f'\n\nОрдер НЕ открыт {symbol}: {text} {data}\n'
@@ -220,7 +220,7 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
 @add_task(task_manager, so_manager, 'start_trading')
 async def start_trading(symbol, **kwargs):
     session = kwargs.get('session')
-    http_session = kwargs.get('http_session')
+    # http_session = kwargs.get('http_session')
     async_session = kwargs.get('async_session')
 
     async def trading_logic():
