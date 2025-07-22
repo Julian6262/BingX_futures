@@ -105,9 +105,6 @@ async def _init_virtual_grid(symbol: str):
     decimal_places = get_decimal_places(await config_manager.get_data(symbol, 'price_step'))
 
     num_steps = 200
-    if symbol == 'TRX':
-        num_steps = 300
-
     grid_boundaries = {}
 
     # Получить индексы существующих ордеров
@@ -211,7 +208,7 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
 
             await _open_order(symbol, session, grid_boundaries, index, side)
 
-            report = f'\nОрдер {symbol} по цене {price} tp {tp}: {text} {data}\n'
+            report = f'\nОрдер {symbol} по цене {price} tp {bound}: {text} {data}\n'
             logger.info(report)
 
         print(f"после изменения grid_boundaries: {grid_boundaries}\n")
