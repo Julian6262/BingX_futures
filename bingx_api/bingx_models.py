@@ -1,5 +1,35 @@
-from asyncio import Lock, CancelledError
+from asyncio import Lock, CancelledError, sleep
 from collections import defaultdict
+from time import monotonic
+
+from main import logger
+
+
+class RateLimiter:
+    """
+    Класс для контроля частоты запросов.
+    Между последовательными запросами проходит не менее `interval` секунд.
+    """
+
+    def __init__(self, interval: float = 1.0):
+        self.interval = interval  # Минимальный интервал между запросами (в секундах)
+        self._last_request_time: float = 0.0  # Время последнего разрешенного запроса
+        self._lock = Lock()  # Блокировка для защиты _last_request_time от гонок
+
+    async def wait_for_permission(self, symbol: str):
+        """
+        Метод блокирует выполнение, если необходимо выждать интервал.
+        """
+        async with self._lock:  # Захватываем блокировку, чтобы только одна задача могла проверять/обновлять
+            now = monotonic()  # Используем time.monotonic() для надежного отсчета времени
+            elapsed_time = now - self._last_request_time
+
+            if elapsed_time < self.interval:
+                time_to_wait = self.interval - elapsed_time
+                logger.warning(f"\nСлишком рано {symbol}. Ожидание {time_to_wait:.2f} сек...")
+                await sleep(time_to_wait)
+
+            self._last_request_time = monotonic()  # Обновляем время последнего запроса после ожидания (если оно было)
 
 
 class ConfigManager:

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.config import config
 from common.func import add_task, get_decimal_places
-from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, TaskManager, ConfigManager
+from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, TaskManager, ConfigManager, RateLimiter
 from database.orm_query import add_order, del_orders
 
 logger = getLogger('my_app')
@@ -24,6 +24,7 @@ ws_price = WebSocketPrice()
 so_manager = SymbolOrderManager()
 task_manager = TaskManager()
 config_manager = ConfigManager()
+api_rate_limiter = RateLimiter(interval=1.0)  # Создаем экземпляр лимитера, общий для всех задач.
 
 
 async def _send_request(method: str, endpoint: str, params: dict, session: ClientSession = None):
@@ -82,7 +83,7 @@ async def price_upd_ws(symbol, **kwargs):
     while True:
         try:
             async with websockets.connect(config.URL_WS) as ws:
-                logger.info(f"WebSocket connected price_upd_ws for {symbol}")
+                print(f"WebSocket connected price_upd_ws for {symbol}")
                 await ws.send(dumps(channel))
 
                 async for message in ws:
@@ -94,9 +95,9 @@ async def price_upd_ws(symbol, **kwargs):
                         logger.error(f"Непредвиденная ошибка price_upd_ws: {e}, сообщение: {message}")
 
         except Exception as e:
-            logger.error(f"Критическая ошибка price_upd_ws: {symbol}, {e}")
+            print(f"Критическая ошибка price_upd_ws: {symbol}, {e}")
 
-        logger.error(f"price_upd_ws для {symbol} завершился. Переподключение через 5 секунд.")
+        print(f"price_upd_ws для {symbol} завершился. Переподключение через 5 секунд.")
         await sleep(5)  # Пауза перед повторным подключением
 
 
@@ -161,7 +162,8 @@ async def _delete_orders(symbol: str, session: AsyncSession, grid_boundaries: di
         for i in orders_boundaries_index:
             grid_boundaries[i][2] = False
 
-        logger.info(f"\nУдалено {symbol}, сторона - {side} : {orders_boundaries_index}\n")
+        price = await ws_price.get_price(symbol)
+        logger.info(f"Удалено {symbol}, цена {price}: {orders_boundaries_index}")
 
 
 # Посмотреть, есть ли ордера на покупку ниже b (выше s) текущего индекса и удалить их
@@ -176,7 +178,7 @@ async def _open_order(symbol: str, session: AsyncSession, grid_boundaries: dict,
 
     data_for_db['id'] = order_id  # Добавить id ордера в память
     await so_manager.update_order(symbol, data_for_db)  # Добавить ордер в память
-    logger.info(f"\nУспешно добавлен {symbol}: {index}\n")
+    logger.info(f"Успешно добавлен {symbol}: {index}")
 
     grid_boundaries[index][2] = side
 
@@ -199,16 +201,26 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
 
     if flag != side and side_old != ('s' if side == 'b' else 'b'):
         if lot := await config_manager.get_data(symbol, 'lot_b' if side == 'b' else 'lot_s'):
+
+            # Запросить разрешение у лимитера
+            await api_rate_limiter.wait_for_permission(symbol)
+
             data, text = await place_order(symbol, side, executed_qty=lot, tp=bound)
 
             if not data.get("orderId"):
-                report = f'\n\nОрдер НЕ открыт {symbol}: {text} {data}\n'
+                report = f'Ордер НЕ открыт {symbol}: {text} {data}\n'
                 logger.error(report)
-                return report
+
+                # if data.get("code") == 100410:
+                #     logger.warning('Код ошибки 100410.')
+                #
+                # await sleep(5)  # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+                return None
 
             await _open_order(symbol, session, grid_boundaries, index, side)
 
-            report = f'\nОрдер {symbol} по цене {price} tp {bound}: {text} {data}\n'
+            report = f'Ордер {symbol} по цене {price} tp {bound}: {text} {data}\n'
             logger.info(report)
 
         print(f"после изменения grid_boundaries: {grid_boundaries}\n")
