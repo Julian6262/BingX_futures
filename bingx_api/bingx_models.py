@@ -1,8 +1,9 @@
 from asyncio import Lock, CancelledError, sleep
 from collections import defaultdict
+from logging import getLogger
 from time import monotonic
 
-from main import logger
+logger = getLogger('my_app')
 
 
 class RateLimiter:

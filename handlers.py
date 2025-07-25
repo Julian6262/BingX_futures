@@ -1,18 +1,12 @@
-import hmac
-import time
 from asyncio import gather
-from hashlib import sha256
-from json import loads, dumps
 
-import httpx
-import requests
 from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 from aiohttp import ClientSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bingx_api.bingx_command import so_manager, task_manager, config_manager, price_upd_ws, start_trading, _send_request
+from bingx_api.bingx_command import so_manager, task_manager, config_manager, price_upd_ws, start_trading
 from common.config import config
 from database.orm_query import del_symbol, add_symbol, update_state
 from filters.chat_types import IsAdmin
