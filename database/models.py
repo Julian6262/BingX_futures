@@ -20,6 +20,8 @@ class SymbolConfig(Base):
     price_step: Mapped[float] = mapped_column(Float, default=0.0001)
     lot_b: Mapped[int] = mapped_column(default=1)
     lot_s: Mapped[int] = mapped_column(default=1)
+    # total_lot_b: Mapped[int] = mapped_column(default=1)
+    # total_lot_s: Mapped[int] = mapped_column(default=1)
 
 
 class Symbol(Base):

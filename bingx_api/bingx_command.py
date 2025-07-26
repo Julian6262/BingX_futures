@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.config import config
 from common.func import add_task, get_decimal_places
-from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, TaskManager, ConfigManager, RateLimiter
+from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, TaskManager, ConfigManager, RateLimiter, \
+    AccountManager
 from database.orm_query import add_order, del_orders
 
 logger = getLogger('my_app')
@@ -23,19 +24,20 @@ logger = getLogger('my_app')
 ws_price = WebSocketPrice()
 so_manager = SymbolOrderManager()
 task_manager = TaskManager()
+account_manager = AccountManager()
 config_manager = ConfigManager()
 api_rate_limiter = RateLimiter(interval=1.0)  # Создаем экземпляр лимитера, общий для всех задач.
 
 
-async def _send_request(method: str, endpoint: str, params: dict, session: ClientSession = None):
+async def _send_request(method: str, endpoint: str, params: dict, http_session: ClientSession):
     params['timestamp'] = int(time() * 1000)
     params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
     sign = hmac_new(config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
     url = f"{config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
 
-    if session:  # В coin-M через aiohttp не работает
+    if http_session:  # В coin-M через aiohttp не работает
         try:
-            async with session.request(method, url) as response:
+            async with http_session.request(method, url) as response:
                 if response.status == 200:
                     if response.content_type == 'application/json':
                         data = await response.json()
@@ -57,7 +59,24 @@ async def _send_request(method: str, endpoint: str, params: dict, session: Clien
         return loads(response.text), "OK"
 
 
-async def place_order(symbol: str, side: str, executed_qty: float, tp: float, session: ClientSession = None):
+async def get_total_lot(symbols, http_session: ClientSession):
+    for symbol in symbols:
+        await sleep(1)  # Задержка перед запуском функции, иначе ошибка API
+
+        position_info, _ = await get_position_info(symbol, http_session)
+        if 'data' in position_info:
+            for position in position_info['data']:
+                logger.info(f'{symbol}, {position}')
+
+
+async def get_position_info(symbol: str, http_session: ClientSession):
+    endpoint = '/openApi/cswap/v1/user/positions'
+    params = {"symbol": f'{symbol}-USD'}
+
+    return await _send_request("GET", endpoint, params, http_session)
+
+
+async def place_order(symbol: str, side: str, executed_qty: float, tp: float, http_session: ClientSession = None):
     endpoint = '/openApi/cswap/v1/trade/order'
     take_profit_dict = {"type": "TAKE_PROFIT_MARKET", "stopPrice": tp, "workingType": "MARK_PRICE"}
     take_profit = dumps(take_profit_dict)
@@ -70,7 +89,49 @@ async def place_order(symbol: str, side: str, executed_qty: float, tp: float, se
               "takeProfit": take_profit,
               }
 
-    return await _send_request("POST", endpoint, params, session)
+    return await _send_request("POST", endpoint, params, http_session)
+
+
+async def manage_listen_key(http_session: ClientSession):
+    endpoint = '/openApi/user/auth/userDataStream'
+
+    listen_key, text = await _send_request("POST", endpoint, {}, http_session)
+    if listen_key is None:
+        logger.error(f'Ошибка получения listen_key: {text}')
+        return
+
+    await account_manager.add_listen_key(listen_key['listenKey'])
+    while True:
+        await sleep(1200)
+        await _send_request("PUT", endpoint, {"listenKey": listen_key['listenKey']}, http_session)
+
+
+async def transaction_upd_ws():
+    while not (listen_key := await account_manager.get_listen_key()):
+        await sleep(0.3)  # Задержка перед попыткой получения ключа
+
+    channel = {}
+    url = f"{config.URL_WS}?listenKey={listen_key}"
+
+    while True:  # Цикл для повторного подключения
+        try:
+            async with websockets.connect(url, ping_interval=30, ping_timeout=30) as ws:
+                logger.info(f"WebSocket connected transaction_upd_ws")
+                await ws.send(dumps(channel))
+
+                async for message in ws:
+                    try:
+                        if 'e' in (data := loads(decompress(message).decode())):
+                            logger.info(f"transaction_upd_ws: {data}")
+
+                    except Exception as e:
+                        logger.error(f"Непредвиденная ошибка transaction_upd_ws: {e}, сообщение: {message}")
+
+        except Exception as e:
+            logger.error(f"Критическая ошибка transaction_upd_ws: {e}")
+
+        logger.error(f"transaction_upd_ws завершился. Переподключение через 5 секунд.")
+        await sleep(5)
 
 
 @add_task(task_manager, so_manager, 'price_upd')
@@ -83,7 +144,7 @@ async def price_upd_ws(symbol, **kwargs):
     while True:
         try:
             async with websockets.connect(config.URL_WS) as ws:
-                print(f"WebSocket connected price_upd_ws for {symbol}")
+                logger.error(f"WebSocket connected price_upd_ws for {symbol}")
                 await ws.send(dumps(channel))
 
                 async for message in ws:
@@ -95,9 +156,9 @@ async def price_upd_ws(symbol, **kwargs):
                         logger.error(f"Непредвиденная ошибка price_upd_ws: {e}, сообщение: {message}")
 
         except Exception as e:
-            print(f"Критическая ошибка price_upd_ws: {symbol}, {e}")
+            logger.error(f"Критическая ошибка price_upd_ws: {symbol}, {e}")
 
-        print(f"price_upd_ws для {symbol} завершился. Переподключение через 5 секунд.")
+        logger.error(f"price_upd_ws для {symbol} завершился. Переподключение через 5 секунд.")
         await sleep(5)  # Пауза перед повторным подключением
 
 
@@ -138,7 +199,7 @@ async def _init_virtual_grid(symbol: str):
     return grid_boundaries
 
 
-def _check_condition(side, index, order):
+async def _check_condition(side, index, order):
     if side == 'b':
         return index > order['boundaries_index']
     elif side == 's':
@@ -151,7 +212,7 @@ async def _delete_orders(symbol: str, session: AsyncSession, grid_boundaries: di
     orders_id, orders_boundaries_index = [], []
 
     for order in orders:
-        if order['order_type'] == side and _check_condition(side, index, order):
+        if order['order_type'] == side and await _check_condition(side, index, order):
             orders_id.append(order['id'])
             orders_boundaries_index.append(order['boundaries_index'])
 
@@ -229,16 +290,20 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
 @add_task(task_manager, so_manager, 'start_trading')
 async def start_trading(symbol, **kwargs):
     session = kwargs.get('session')
-    # http_session = kwargs.get('http_session')
+    http_session = kwargs.get('http_session')
     async_session = kwargs.get('async_session')
 
     async def trading_logic():
         while not await ws_price.get_price(symbol):
             await sleep(0.3)  # Задержка перед попыткой получения цены
 
-        logger.info(f'Запуск торговли {symbol}')
+        # print(f'Запуск торговли {symbol}')
 
-        grid_boundaries = await _init_virtual_grid(symbol)
+        grid_boundaries = await _init_virtual_grid(symbol)  # Инициализация сетки
+
+        # await _delete_orders(symbol, session, grid_boundaries, index, side)
+        # result = await query_leverage(symbol, http_session=http_session)  # количество открытых позиций по символу
+        # logger.info(f"\n{result}\n")
 
         while True:
             price = await ws_price.get_price(symbol)

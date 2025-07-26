@@ -9,7 +9,8 @@ from common.config import config
 from database.orm_query import load_from_db, init_db
 from handlers import router
 
-from bingx_api.bingx_command import price_upd_ws, so_manager, start_trading, config_manager
+from bingx_api.bingx_command import price_upd_ws, so_manager, start_trading, config_manager, manage_listen_key, \
+    transaction_upd_ws, get_total_lot
 
 from middlewares.db import DataBaseSession
 from middlewares.http import HttpSession
@@ -56,7 +57,9 @@ async def main():
 
         symbols = so_manager.symbols
         tasks = (
-            # *(start_indicators(symbol, http_session=http_session) for symbol in symbols),
+            manage_listen_key(http_session),
+            transaction_upd_ws(),
+            get_total_lot(symbols, http_session=http_session),
             *(price_upd_ws(symbol, seconds=i) for i, symbol in enumerate(symbols)),
             *(start_trading(symbol, http_session=http_session, async_session=async_session) for symbol in symbols),
 
