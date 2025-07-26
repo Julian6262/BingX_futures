@@ -63,10 +63,13 @@ async def get_total_lot(symbols, http_session: ClientSession):
     for symbol in symbols:
         await sleep(1)  # Задержка перед запуском функции, иначе ошибка API
 
-        position_info, _ = await get_position_info(symbol, http_session)
-        if 'data' in position_info:
-            for position in position_info['data']:
-                logger.info(f'{symbol}, {position}')
+        positions_info, _ = await get_position_info(symbol, http_session)
+        if positions_info := positions_info.get('data'):
+            for position in positions_info:
+                logger.info(
+                    f'{symbol}, positionSide {position['positionSide']}, positionAmt {position["positionAmt"]}, riskRate {position["riskRate"]}')
+        else:
+            logger.error(f'Ошибка получения positions_info: {symbol}')
 
 
 async def get_position_info(symbol: str, http_session: ClientSession):
@@ -290,14 +293,14 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
 @add_task(task_manager, so_manager, 'start_trading')
 async def start_trading(symbol, **kwargs):
     session = kwargs.get('session')
-    http_session = kwargs.get('http_session')
+    # http_session = kwargs.get('http_session')
     async_session = kwargs.get('async_session')
 
     async def trading_logic():
         while not await ws_price.get_price(symbol):
             await sleep(0.3)  # Задержка перед попыткой получения цены
 
-        # print(f'Запуск торговли {symbol}')
+        # logger.info(f'Запуск торговли {symbol}')
 
         grid_boundaries = await _init_virtual_grid(symbol)  # Инициализация сетки
 
