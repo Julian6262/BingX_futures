@@ -59,17 +59,31 @@ async def _send_request(method: str, endpoint: str, params: dict, http_session: 
         return loads(response.text), "OK"
 
 
+async def _handle_position_info(symbol: str, positions_info):
+    for position in positions_info:
+        await so_manager.set_total_lot(symbol, position['positionSide'], int(position["positionAmt"]))
+        await so_manager.set_risk_rate(symbol, float(position["riskRate"]))
+
+
 async def get_total_lot(symbols, http_session: ClientSession):
     for symbol in symbols:
         await sleep(1)  # Задержка перед запуском функции, иначе ошибка API
 
+        # Сделать в цикле !!!!!!!!!
+
         positions_info, _ = await get_position_info(symbol, http_session)
         if positions_info := positions_info.get('data'):
-            for position in positions_info:
-                logger.info(
-                    f'{symbol}, positionSide {position['positionSide']}, positionAmt {position["positionAmt"]}, riskRate {position["riskRate"]}')
+            await _handle_position_info(symbol, positions_info)
+
         else:
-            logger.error(f'Ошибка получения positions_info: {symbol}')
+            logger.error(f'Ошибка получения positions_info, пауза 5 сек: {symbol}')
+            await sleep(5)
+
+            positions_info, _ = await get_position_info(symbol, http_session)
+            if positions_info := positions_info.get('data'):
+                await _handle_position_info(symbol, positions_info)
+
+        logger.info(f'total загружен: {symbol}')
 
 
 async def get_position_info(symbol: str, http_session: ClientSession):
@@ -116,7 +130,7 @@ async def transaction_upd_ws():
     channel = {}
     url = f"{config.URL_WS}?listenKey={listen_key}"
 
-    while True:  # Цикл для повторного подключения
+    while True:
         try:
             async with websockets.connect(url, ping_interval=30, ping_timeout=30) as ws:
                 logger.info(f"WebSocket connected transaction_upd_ws")
@@ -147,7 +161,7 @@ async def price_upd_ws(symbol, **kwargs):
     while True:
         try:
             async with websockets.connect(config.URL_WS) as ws:
-                logger.error(f"WebSocket connected price_upd_ws for {symbol}")
+                logger.info(f"WebSocket connected price_upd_ws for {symbol}")
                 await ws.send(dumps(channel))
 
                 async for message in ws:
@@ -297,16 +311,13 @@ async def start_trading(symbol, **kwargs):
     async_session = kwargs.get('async_session')
 
     async def trading_logic():
-        while not await ws_price.get_price(symbol):
-            await sleep(0.3)  # Задержка перед попыткой получения цены
+        while not ((await so_manager.get_total_lot(symbol, 'LONG'))[1] and
+                   (await so_manager.get_total_lot(symbol, 'SHORT'))[1] and await ws_price.get_price(symbol)):
+            await sleep(0.3)
 
-        # logger.info(f'Запуск торговли {symbol}')
+        logger.info(f'Запуск торговли {symbol}')
 
         grid_boundaries = await _init_virtual_grid(symbol)  # Инициализация сетки
-
-        # await _delete_orders(symbol, session, grid_boundaries, index, side)
-        # result = await query_leverage(symbol, http_session=http_session)  # количество открытых позиций по символу
-        # logger.info(f"\n{result}\n")
 
         while True:
             price = await ws_price.get_price(symbol)

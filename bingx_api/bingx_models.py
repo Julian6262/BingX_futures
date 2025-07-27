@@ -43,13 +43,13 @@ class ConfigManager:
         async with self._lock:
             for data in batch_data:
                 self.symbols.append(data.symbol_name)
-                self._data[data.symbol_name]['init_grid_step'] = data.init_grid_step
-                self._data[data.symbol_name]['grid_size'] = data.grid_size
-                self._data[data.symbol_name]['price_step'] = data.price_step
-                self._data[data.symbol_name]['lot_b'] = data.lot_b
-                self._data[data.symbol_name]['lot_s'] = data.lot_s
-                # self._data[data.symbol_name]['total_lot_b'] = data.total_lot_b
-                # self._data[data.symbol_name]['total_lot_s'] = data.total_lot_s
+                self._data[data.symbol_name].update({
+                    'init_grid_step': data.init_grid_step,
+                    'grid_size': data.grid_size,
+                    'price_step': data.price_step,
+                    'lot_b': data.lot_b,
+                    'lot_s': data.lot_s,
+                })
 
     # async def set_data(self, symbol: str, key: str, value: float | bool):
     #     async with self._lock:
@@ -96,19 +96,8 @@ class WebSocketPrice:  # Класс для работы с ценами в ре�
 
 class AccountManager:  # Класс для работы с данными счета
     def __init__(self):
-        # self._balance = {}
-        # self._usdt_block = 'unblock'
         self._listen_key = None
         self._lock = Lock()
-
-    # async def update_balance_batch(self, batch_data: list):
-    #     async with self._lock:
-    #         for data in batch_data:
-    #             self._balance[data['a']] = float(data['wb'])
-    #
-    # async def get_balance(self, symbol: str):
-    #     async with self._lock:
-    #         return self._balance.get(symbol, 0.0)
 
     async def add_listen_key(self, listen_key: str):
         async with self._lock:
@@ -117,15 +106,6 @@ class AccountManager:  # Класс для работы с данными сче
     async def get_listen_key(self):
         async with self._lock:
             return self._listen_key
-
-    # async def set_usdt_block(self, state: str):
-    #     async with self._lock:
-    #         self._usdt_block = state
-    #
-    # async def get_usdt_block(self):
-    #     async with self._lock:
-    #         return self._usdt_block
-
 
 
 class SymbolOrderManager:  # Класс для работы с ордерами в реальном времени
@@ -138,6 +118,9 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
     def _create_default_symbol_data():
         return {'state': 'stop',
                 'profit': 0.0,
+                'total_lot_b': (0, False),
+                'total_lot_s': (0, False),
+                'risk_rate': 0,
                 'orders': []}
 
     async def add_symbols_and_orders(self, batch_data: list):
@@ -150,7 +133,6 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
                     'orders': orders
                 })
 
-
     async def set_grid_boundaries(self, symbol: str, grid_boundaries: list):
         async with self._lock:
             self._data[symbol]['grid_boundaries'] = grid_boundaries
@@ -158,6 +140,22 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
     async def get_grid_boundaries(self, symbol: str):
         async with self._lock:
             return self._data.get(symbol).get('grid_boundaries')
+
+    async def set_risk_rate(self, symbol: str, value: float):
+        async with self._lock:
+            self._data[symbol]['risk_rate'] = value
+
+    async def get_risk_rate(self, symbol: str):
+        async with self._lock:
+            return self._data.get(symbol).get('risk_rate')
+
+    async def set_total_lot(self, symbol: str, key: str, value: int):
+        async with self._lock:
+            self._data[symbol]['total_lot_b' if key == 'LONG' else 'total_lot_s'] = (value, True)
+
+    async def get_total_lot(self, symbol: str, key: str):
+        async with self._lock:
+            return self._data.get(symbol).get('total_lot_b' if key == 'LONG' else 'total_lot_s')
 
     async def set_state(self, symbol: str, state: str):
         async with self._lock:
@@ -185,18 +183,6 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
     async def get_orders(self, symbol: str):
         async with self._lock:
             return self._data.get(symbol).get('orders')
-
-    # async def update_profit(self, symbol: str, profit: float):
-    #     async with self._lock:
-    #         self._data[symbol]['profit'] += profit
-    #
-    # async def get_profit(self, symbol: str):
-    #     async with self._lock:
-    #         return self._data.get(symbol).get('profit')
-
-    # async def get_summary_profit(self):
-    #     async with self._lock:
-    #         return sum(symbol_data['profit'] for _, symbol_data in self._data.items())
 
     async def del_orders(self, symbol: str, orders_id: list):
         async with self._lock:

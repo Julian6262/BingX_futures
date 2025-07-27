@@ -89,5 +89,3 @@ async def start_cmd(message: Message, session: AsyncSession, http_session: Clien
         print(tasks)
 
 
-    resp = await query_leverage("ADA", http_session)
-    await message.answer(str(resp))
