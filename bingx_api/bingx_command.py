@@ -310,10 +310,10 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
 
     if side == 'b':
 
-        if -10 <= total_lot_b - total_lot_s < -2:
+        if -10 * lot <= total_lot_b - total_lot_s < -2 * lot:
             dynamic_lot = lot * 2
 
-        elif total_lot_b - total_lot_s < -10:
+        elif total_lot_b - total_lot_s < -10 * lot:
             dynamic_lot = lot * 3
 
         report = f'total_lot_b - total_lot_s {total_lot_b - total_lot_s} dinamic_lot {dynamic_lot}'
@@ -321,10 +321,10 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
 
     elif side == 's':
 
-        if -10 <= total_lot_s - total_lot_b < -2:
+        if -10 * lot <= total_lot_s - total_lot_b < -2 * lot:
             dynamic_lot = lot * 2
 
-        elif total_lot_s - total_lot_b < -10:
+        elif total_lot_s - total_lot_b < -10 * lot:
             dynamic_lot = lot * 3
 
         report = f'total_lot_s - total_lot_b {total_lot_s - total_lot_b} dinamic_lot {dynamic_lot}'
@@ -339,11 +339,13 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
     if flag != side and side_old != ('s' if side == 'b' else 'b'):
         if lot := await config_manager.get_data(symbol, 'lot_b' if side == 'b' else 'lot_s'):
             dynamic_lot = await _manage_total_lot(symbol, side, lot)
+            price_step = await config_manager.get_data(symbol, 'price_step')
+            tp = bound + (-price_step if side == 'b' else price_step)
 
             # Запросить разрешение у лимитера
             await api_rate_limiter.wait_for_permission(symbol)
 
-            data, text = await place_order(symbol, side, executed_qty=lot, tp=bound)
+            data, text = await place_order(symbol, side, executed_qty=dynamic_lot, tp=tp)
 
             if not data.get("orderId"):
                 report = f'Ордер НЕ открыт {symbol}: {text} {data}\n'
@@ -361,7 +363,7 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
             # total_lot_b = await so_manager.get_total_lot(symbol, 'LONG')
             # total_lot_s = await so_manager.get_total_lot(symbol, 'SHORT')
 
-            report = f'Ордер {symbol} цена {price} tp {bound} dinamic_lot {dynamic_lot}: {data}\n'
+            report = f'Ордер {symbol} цена {price} tp {tp} dinamic_lot {dynamic_lot}: {data}\n'
             logger.info(report)
 
         print(f"после изменения grid_boundaries: {grid_boundaries}\n")
