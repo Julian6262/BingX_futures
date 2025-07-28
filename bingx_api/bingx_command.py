@@ -138,8 +138,8 @@ async def transaction_upd_ws():
 
                 async for message in ws:
                     try:
-                        if 'e' in (data := loads(decompress(message).decode())):
-                            logger.info(f"transaction_upd_ws: {data}")
+                        if 'o' in (data := loads(decompress(message).decode())):
+                            await _handle_total_lot(data['o'])
 
                     except Exception as e:
                         logger.error(f"Непредвиденная ошибка transaction_upd_ws: {e}, сообщение: {message}")
@@ -177,6 +177,32 @@ async def price_upd_ws(symbol, **kwargs):
 
         logger.error(f"price_upd_ws для {symbol} завершился. Переподключение через 5 секунд.")
         await sleep(5)  # Пауза перед повторным подключением
+
+
+async def _handle_total_lot(data: dict):
+    if data['s']:
+        # logger.info(f"transaction_upd_ws: {data}")
+
+        symbol = data['s'].split('-')[0]
+        quantity = int((data['q'].split('.')[0])[:-1])
+        total_lot_b, _ = await so_manager.get_total_lot(symbol, 'LONG')
+        total_lot_s, _ = await so_manager.get_total_lot(symbol, 'SHORT')
+
+        if data['S'] == 'BUY' and data['ps'] == 'LONG':
+            logger.info(f"{symbol}: LONG + {quantity}: lot_b {total_lot_b + quantity} lot_s {total_lot_s}")
+            await so_manager.set_total_lot(symbol, 'LONG', total_lot_b + quantity)
+
+        elif data['S'] == 'SELL' and data['ps'] == 'SHORT':
+            logger.info(f"{symbol}: SHORT + {quantity}: lot_b {total_lot_b} lot_s {total_lot_s + quantity}")
+            await so_manager.set_total_lot(symbol, 'SHORT', total_lot_s + quantity)
+
+        elif data['S'] == 'SELL' and data['ps'] == 'LONG':
+            logger.info(f"{symbol}: LONG - {quantity}: lot_b {total_lot_b - quantity} lot_s {total_lot_s}")
+            await so_manager.set_total_lot(symbol, 'LONG', total_lot_b - quantity)
+
+        elif data['S'] == 'BUY' and data['ps'] == 'SHORT':
+            logger.info(f"{symbol}: SHORT - {quantity}: lot_b {total_lot_b} lot_s {total_lot_s - quantity}")
+            await so_manager.set_total_lot(symbol, 'SHORT', total_lot_s - quantity)
 
 
 async def _init_virtual_grid(symbol: str):
@@ -274,11 +300,45 @@ async def _handle_midpoint_grid_adjustment(symbol: str, index_old, lower_old, up
         await so_manager.set_grid_boundaries(symbol, [index_old, lower_old, upper_old, False])
 
 
+async def _manage_total_lot(symbol: str, side: str, lot: int):
+    total_lot_b, _ = await so_manager.get_total_lot(symbol, 'LONG')
+    total_lot_s, _ = await so_manager.get_total_lot(symbol, 'SHORT')
+    dynamic_lot = lot
+
+    report = f'total_lot_b {total_lot_b} total_lot_s {total_lot_s}'
+    logger.info(report)
+
+    if side == 'b':
+
+        if -10 <= total_lot_b - total_lot_s < -2:
+            dynamic_lot = lot * 2
+
+        elif total_lot_b - total_lot_s < -10:
+            dynamic_lot = lot * 3
+
+        report = f'total_lot_b - total_lot_s {total_lot_b - total_lot_s} dinamic_lot {dynamic_lot}'
+        logger.info(report)
+
+    elif side == 's':
+
+        if -10 <= total_lot_s - total_lot_b < -2:
+            dynamic_lot = lot * 2
+
+        elif total_lot_s - total_lot_b < -10:
+            dynamic_lot = lot * 3
+
+        report = f'total_lot_s - total_lot_b {total_lot_s - total_lot_b} dinamic_lot {dynamic_lot}'
+        logger.info(report)
+
+    return dynamic_lot
+
+
 async def _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, flag, bound, side):
     await _delete_orders(symbol, session, grid_boundaries, index, side)
 
     if flag != side and side_old != ('s' if side == 'b' else 'b'):
         if lot := await config_manager.get_data(symbol, 'lot_b' if side == 'b' else 'lot_s'):
+            dynamic_lot = await _manage_total_lot(symbol, side, lot)
 
             # Запросить разрешение у лимитера
             await api_rate_limiter.wait_for_permission(symbol)
@@ -298,7 +358,10 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
 
             await _open_order(symbol, session, grid_boundaries, index, side)
 
-            report = f'Ордер {symbol} по цене {price} tp {bound}: {text} {data}\n'
+            # total_lot_b = await so_manager.get_total_lot(symbol, 'LONG')
+            # total_lot_s = await so_manager.get_total_lot(symbol, 'SHORT')
+
+            report = f'Ордер {symbol} цена {price} tp {bound} dinamic_lot {dynamic_lot}: {data}\n'
             logger.info(report)
 
         print(f"после изменения grid_boundaries: {grid_boundaries}\n")
