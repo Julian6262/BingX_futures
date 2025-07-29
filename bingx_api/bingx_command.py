@@ -26,7 +26,7 @@ so_manager = SymbolOrderManager()
 task_manager = TaskManager()
 account_manager = AccountManager()
 config_manager = ConfigManager()
-api_rate_limiter = RateLimiter(interval=1.0)  # Создаем экземпляр лимитера, общий для всех задач.
+api_rate_limiter = RateLimiter(interval=2.0)  # Создаем экземпляр лимитера, общий для всех задач.
 
 
 async def _send_request(method: str, endpoint: str, params: dict, http_session: ClientSession):
@@ -310,24 +310,24 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
 
     if side == 'b':
 
-        if -10 * lot <= total_lot_b - total_lot_s < -2 * lot:
+        if 3 * lot <= total_lot_s - total_lot_b <= 10 * lot:
             dynamic_lot = lot * 2
 
-        elif total_lot_b - total_lot_s < -10 * lot:
+        elif total_lot_s - total_lot_b > 10 * lot:
             dynamic_lot = lot * 3
 
-        report = f'total_lot_b - total_lot_s {total_lot_b - total_lot_s} dinamic_lot {dynamic_lot}'
+        report = f'total_lot_s - total_lot_b {total_lot_s - total_lot_b} dinamic_lot {dynamic_lot}'
         logger.info(report)
 
     elif side == 's':
 
-        if -10 * lot <= total_lot_s - total_lot_b < -2 * lot:
+        if 3 * lot <= total_lot_b - total_lot_s <= 10 * lot:
             dynamic_lot = lot * 2
 
-        elif total_lot_s - total_lot_b < -10 * lot:
+        elif total_lot_b - total_lot_s > 10 * lot:
             dynamic_lot = lot * 3
 
-        report = f'total_lot_s - total_lot_b {total_lot_s - total_lot_b} dinamic_lot {dynamic_lot}'
+        report = f'total_lot_b - total_lot_s {total_lot_b - total_lot_s} dinamic_lot {dynamic_lot}'
         logger.info(report)
 
     return dynamic_lot
