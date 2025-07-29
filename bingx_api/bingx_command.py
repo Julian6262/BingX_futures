@@ -65,7 +65,7 @@ async def _handle_position_info(symbol: str, positions_info):
         await so_manager.set_risk_rate(symbol, float(position["riskRate"]))
 
 
-async def get_total_lot(symbols, http_session: ClientSession):
+async def request_total_lot(symbols, http_session: ClientSession):
     for symbol in symbols:
         await sleep(1)  # Задержка перед запуском функции, иначе ошибка API
 
@@ -185,8 +185,8 @@ async def _handle_total_lot(data: dict):
 
         symbol = data['s'].split('-')[0]
         quantity = int((data['q'].split('.')[0])[:-1])
-        total_lot_b, _ = await so_manager.get_total_lot(symbol, 'LONG')
-        total_lot_s, _ = await so_manager.get_total_lot(symbol, 'SHORT')
+        total_lot_b = await so_manager.get_total_lot(symbol, 'LONG')
+        total_lot_s = await so_manager.get_total_lot(symbol, 'SHORT')
 
         if data['S'] == 'BUY' and data['ps'] == 'LONG':
             logger.info(f"{symbol}: LONG + {quantity}: lot_b {total_lot_b + quantity} lot_s {total_lot_s}")
@@ -301,8 +301,8 @@ async def _handle_midpoint_grid_adjustment(symbol: str, index_old, lower_old, up
 
 
 async def _manage_total_lot(symbol: str, side: str, lot: int):
-    total_lot_b, _ = await so_manager.get_total_lot(symbol, 'LONG')
-    total_lot_s, _ = await so_manager.get_total_lot(symbol, 'SHORT')
+    total_lot_b = await so_manager.get_total_lot(symbol, 'LONG')
+    total_lot_s = await so_manager.get_total_lot(symbol, 'SHORT')
     dynamic_lot = lot
 
     report = f'total_lot_b {total_lot_b} total_lot_s {total_lot_s}'
@@ -340,7 +340,8 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
         if lot := await config_manager.get_data(symbol, 'lot_b' if side == 'b' else 'lot_s'):
             dynamic_lot = await _manage_total_lot(symbol, side, lot)
             price_step = await config_manager.get_data(symbol, 'price_step')
-            tp = bound + (-price_step if side == 'b' else price_step)
+            decimal_places = get_decimal_places(await config_manager.get_data(symbol, 'price_step'))
+            tp = round(bound + (-price_step if side == 'b' else price_step), decimal_places)
 
             # Запросить разрешение у лимитера
             await api_rate_limiter.wait_for_permission(symbol)
@@ -360,9 +361,6 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
 
             await _open_order(symbol, session, grid_boundaries, index, side)
 
-            # total_lot_b = await so_manager.get_total_lot(symbol, 'LONG')
-            # total_lot_s = await so_manager.get_total_lot(symbol, 'SHORT')
-
             report = f'Ордер {symbol} цена {price} tp {tp} dinamic_lot {dynamic_lot}: {data}\n'
             logger.info(report)
 
@@ -376,8 +374,7 @@ async def start_trading(symbol, **kwargs):
     async_session = kwargs.get('async_session')
 
     async def trading_logic():
-        while not ((await so_manager.get_total_lot(symbol, 'LONG'))[1] and
-                   (await so_manager.get_total_lot(symbol, 'SHORT'))[1] and await ws_price.get_price(symbol)):
+        while not ((await so_manager.get_risk_rate(symbol))[1] and await ws_price.get_price(symbol)):
             await sleep(0.3)
 
         logger.info(f'Запуск торговли {symbol}')

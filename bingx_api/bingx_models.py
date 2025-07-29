@@ -118,9 +118,9 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
     def _create_default_symbol_data():
         return {'state': 'stop',
                 'profit': 0.0,
-                'total_lot_b': (0, False),
-                'total_lot_s': (0, False),
-                'risk_rate': 0,
+                'total_lot_b': 0,
+                'total_lot_s': 0,
+                'risk_rate': (0, False),
                 'orders': []}
 
     async def add_symbols_and_orders(self, batch_data: list):
@@ -141,9 +141,9 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
         async with self._lock:
             return self._data.get(symbol).get('grid_boundaries')
 
-    async def set_risk_rate(self, symbol: str, value: float):
+    async def set_risk_rate(self, symbol: str, value):
         async with self._lock:
-            self._data[symbol]['risk_rate'] = value
+            self._data[symbol]['risk_rate'] = (value, True)
 
     async def get_risk_rate(self, symbol: str):
         async with self._lock:
@@ -151,7 +151,7 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
 
     async def set_total_lot(self, symbol: str, key: str, value: int):
         async with self._lock:
-            self._data[symbol]['total_lot_b' if key == 'LONG' else 'total_lot_s'] = (value, True)
+            self._data[symbol]['total_lot_b' if key == 'LONG' else 'total_lot_s'] = value
 
     async def get_total_lot(self, symbol: str, key: str):
         async with self._lock:
