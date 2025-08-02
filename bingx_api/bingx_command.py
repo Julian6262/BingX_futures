@@ -72,16 +72,33 @@ async def request_total_lot(symbols, http_session: ClientSession):
         # Сделать в цикле !!!!!!!!!
 
         positions_info, _ = await get_position_info(symbol, http_session)
-        if positions_info := positions_info.get('data'):
+        if 'data' in positions_info:
+            positions_info = positions_info['data']
+
+            if positions_info is None:
+                logger.info(f'Нет открытых позиций: {symbol}, {positions_info}')
+                await so_manager.set_risk_rate(symbol, 0.0)
+                return
+
             await _handle_position_info(symbol, positions_info)
 
         else:
-            logger.error(f'Ошибка получения positions_info, пауза 5 сек: {symbol}')
+            logger.error(f'Ошибка получения positions_info, пауза 5 сек: {symbol}, {positions_info}')
             await sleep(5)
 
             positions_info, _ = await get_position_info(symbol, http_session)
-            if positions_info := positions_info.get('data'):
+            if 'data' in positions_info:
+                positions_info = positions_info['data']
+
+                if positions_info is None:
+                    logger.info(f'Нет открытых позиций: {symbol}, {positions_info}')
+                    await so_manager.set_risk_rate(symbol, 0.0)
+                    return
+
                 await _handle_position_info(symbol, positions_info)
+
+            else:
+                logger.error(f'Ошибка получения positions_info, пауза 5 сек: {symbol}, {positions_info}')
 
         logger.info(f'total загружен: {symbol}')
 
@@ -133,7 +150,7 @@ async def transaction_upd_ws():
     while True:
         try:
             async with websockets.connect(url, ping_interval=30, ping_timeout=30) as ws:
-                logger.info(f"WebSocket connected transaction_upd_ws")
+                print(f"WebSocket connected transaction_upd_ws")
                 await ws.send(dumps(channel))
 
                 async for message in ws:
@@ -145,7 +162,7 @@ async def transaction_upd_ws():
                         logger.error(f"Непредвиденная ошибка transaction_upd_ws: {e}, сообщение: {message}")
 
         except Exception as e:
-            logger.error(f"Критическая ошибка transaction_upd_ws: {e}")
+            print(f"Критическая ошибка transaction_upd_ws: {e}")
 
         logger.error(f"transaction_upd_ws завершился. Переподключение через 5 секунд.")
         await sleep(5)
@@ -161,7 +178,7 @@ async def price_upd_ws(symbol, **kwargs):
     while True:
         try:
             async with websockets.connect(config.URL_WS) as ws:
-                logger.info(f"WebSocket connected price_upd_ws for {symbol}")
+                print(f"WebSocket connected price_upd_ws for {symbol}")
                 await ws.send(dumps(channel))
 
                 async for message in ws:
@@ -173,7 +190,7 @@ async def price_upd_ws(symbol, **kwargs):
                         logger.error(f"Непредвиденная ошибка price_upd_ws: {e}, сообщение: {message}")
 
         except Exception as e:
-            logger.error(f"Критическая ошибка price_upd_ws: {symbol}, {e}")
+            print(f"Критическая ошибка price_upd_ws: {symbol}, {e}")
 
         logger.error(f"price_upd_ws для {symbol} завершился. Переподключение через 5 секунд.")
         await sleep(5)  # Пауза перед повторным подключением
@@ -305,8 +322,8 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
     total_lot_s = await so_manager.get_total_lot(symbol, 'SHORT')
     dynamic_lot = lot
 
-    report = f'total_lot_b {total_lot_b} total_lot_s {total_lot_s}'
-    logger.info(report)
+    # report = f'total_lot_b {total_lot_b} total_lot_s {total_lot_s}'
+    # logger.info(report)
 
     if side == 'b':
 
@@ -316,8 +333,8 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
         elif total_lot_s - total_lot_b > 10 * lot:
             dynamic_lot = lot * 3
 
-        report = f'total_lot_s - total_lot_b {total_lot_s - total_lot_b} dinamic_lot {dynamic_lot}'
-        logger.info(report)
+        # report = f'total_lot_s - total_lot_b {total_lot_s - total_lot_b} dinamic_lot {dynamic_lot}'
+        # logger.info(report)
 
     elif side == 's':
 
@@ -327,8 +344,8 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
         elif total_lot_b - total_lot_s > 10 * lot:
             dynamic_lot = lot * 3
 
-        report = f'total_lot_b - total_lot_s {total_lot_b - total_lot_s} dinamic_lot {dynamic_lot}'
-        logger.info(report)
+        # report = f'total_lot_b - total_lot_s {total_lot_b - total_lot_s} dinamic_lot {dynamic_lot}'
+        # logger.info(report)
 
     return dynamic_lot
 
