@@ -322,30 +322,15 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
     total_lot_s = await so_manager.get_total_lot(symbol, 'SHORT')
     dynamic_lot = lot
 
-    # report = f'total_lot_b {total_lot_b} total_lot_s {total_lot_s}'
-    # logger.info(report)
-
     if side == 'b':
 
-        if 3 * lot <= total_lot_s - total_lot_b <= 10 * lot:
+        if 3 * lot <= total_lot_s - total_lot_b:
             dynamic_lot = lot * 2
-
-        elif total_lot_s - total_lot_b > 10 * lot:
-            dynamic_lot = lot * 3
-
-        # report = f'total_lot_s - total_lot_b {total_lot_s - total_lot_b} dinamic_lot {dynamic_lot}'
-        # logger.info(report)
 
     elif side == 's':
 
-        if 3 * lot <= total_lot_b - total_lot_s <= 10 * lot:
+        if 3 * lot <= total_lot_b - total_lot_s:
             dynamic_lot = lot * 2
-
-        elif total_lot_b - total_lot_s > 10 * lot:
-            dynamic_lot = lot * 3
-
-        # report = f'total_lot_b - total_lot_s {total_lot_b - total_lot_s} dinamic_lot {dynamic_lot}'
-        # logger.info(report)
 
     return dynamic_lot
 
@@ -368,11 +353,6 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
             if not data.get("orderId"):
                 report = f'Ордер НЕ открыт {symbol}: {text} {data}\n'
                 logger.error(report)
-
-                # if data.get("code") == 100410:
-                #     logger.warning('Код ошибки 100410.')
-                #
-                # await sleep(5)  # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
                 return None
 
