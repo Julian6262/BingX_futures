@@ -51,9 +51,9 @@ class ConfigManager:
                     'lot_s': data.lot_s,
                 })
 
-    # async def set_data(self, symbol: str, key: str, value: float | bool):
-    #     async with self._lock:
-    #         self._data[symbol][key] = value
+    async def set_data(self, symbol: str, key: str, value: float | bool):
+        async with self._lock:
+            self._data[symbol][key] = value
 
     async def get_data(self, symbol: str, key: str):
         async with self._lock:
@@ -85,9 +85,9 @@ class WebSocketPrice:  # Класс для работы с ценами в ре�
         self._data = {}
         self._lock = Lock()
 
-    async def update_price(self, symbol: str, price: float):
+    async def update_price(self, symbol: str, time: int, price: float):
         async with self._lock:
-            self._data[symbol] = price
+            self._data[symbol] = time, price
 
     async def get_price(self, symbol: str):
         async with self._lock:
@@ -121,6 +121,7 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
                 'total_lot_b': 0,
                 'total_lot_s': 0,
                 'risk_rate': (0, False),
+                'b_s_trigger': 'new',
                 'orders': []}
 
     async def add_symbols_and_orders(self, batch_data: list):
@@ -132,6 +133,14 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
                     'profit': symbol.profit,
                     'orders': orders
                 })
+
+    async def set_b_s_trigger(self, symbol: str, trigger: str):
+        async with self._lock:
+            self._data[symbol]['b_s_trigger'] = trigger
+
+    async def get_b_s_trigger(self, symbol: str):
+        async with self._lock:
+            return self._data.get(symbol).get('b_s_trigger')
 
     async def set_grid_boundaries(self, symbol: str, grid_boundaries: list):
         async with self._lock:

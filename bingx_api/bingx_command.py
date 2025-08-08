@@ -29,6 +29,13 @@ config_manager = ConfigManager()
 api_rate_limiter = RateLimiter(interval=2.0)  # Создаем экземпляр лимитера, общий для всех задач.
 
 
+async def get_candlestick_data(symbol: str, http_session: ClientSession, interval: str, limit: int):
+    endpoint = '/openApi/cswap/v1/market/klines'
+    params = {"symbol": f'{symbol}-USD', "interval": interval, "limit": limit}
+
+    return await _send_request("GET", endpoint, params, http_session)
+
+
 async def _send_request(method: str, endpoint: str, params: dict, http_session: ClientSession):
     params['timestamp'] = int(time() * 1000)
     params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
@@ -184,7 +191,7 @@ async def price_upd_ws(symbol, **kwargs):
                 async for message in ws:
                     try:
                         if 'data' in (data := loads(decompress(message).decode())):
-                            await ws_price.update_price(symbol, float(data["data"]["p"]))
+                            await ws_price.update_price(symbol, int(time() * 1000), float(data["data"]["p"]))
 
                     except Exception as e:
                         logger.error(f"Непредвиденная ошибка price_upd_ws: {e}, сообщение: {message}")
@@ -198,8 +205,6 @@ async def price_upd_ws(symbol, **kwargs):
 
 async def _handle_total_lot(data: dict):
     if data['s']:
-        # logger.info(f"transaction_upd_ws: {data}")
-
         symbol = data['s'].split('-')[0]
         quantity = int((data['q'].split('.')[0])[:-1])
         total_lot_b = await so_manager.get_total_lot(symbol, 'LONG')
@@ -223,7 +228,7 @@ async def _handle_total_lot(data: dict):
 
 
 async def _init_virtual_grid(symbol: str):
-    current_price = await ws_price.get_price(symbol)
+    _, current_price = await ws_price.get_price(symbol)
     decimal_places = get_decimal_places(await config_manager.get_data(symbol, 'price_step'))
 
     num_steps = 200
@@ -283,7 +288,7 @@ async def _delete_orders(symbol: str, session: AsyncSession, grid_boundaries: di
         for i in orders_boundaries_index:
             grid_boundaries[i][2] = False
 
-        price = await ws_price.get_price(symbol)
+        _, price = await ws_price.get_price(symbol)
         logger.info(f"Удалено {symbol}, цена {price}: {orders_boundaries_index}")
 
 
@@ -338,7 +343,7 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
 async def _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, flag, bound, side):
     await _delete_orders(symbol, session, grid_boundaries, index, side)
 
-    if flag != side and side_old != ('s' if side == 'b' else 'b'):
+    if side == await so_manager.get_b_s_trigger(symbol) and flag != side and side_old != ('s' if side == 'b' else 'b'):
         if lot := await config_manager.get_data(symbol, 'lot_b' if side == 'b' else 'lot_s'):
             dynamic_lot = await _manage_total_lot(symbol, side, lot)
             price_step = await config_manager.get_data(symbol, 'price_step')
@@ -371,15 +376,15 @@ async def start_trading(symbol, **kwargs):
     async_session = kwargs.get('async_session')
 
     async def trading_logic():
-        while not ((await so_manager.get_risk_rate(symbol))[1] and await ws_price.get_price(symbol)):
+        while not ((await so_manager.get_risk_rate(symbol))[1] and await config_manager.get_data(symbol, 'macd')):
             await sleep(0.3)
 
-        logger.info(f'Запуск торговли {symbol}')
+        logger.info(f'Запуск торговли {symbol}\n')
 
         grid_boundaries = await _init_virtual_grid(symbol)  # Инициализация сетки
 
         while True:
-            price = await ws_price.get_price(symbol)
+            _, price = await ws_price.get_price(symbol)
             index_old, lower_old, upper_old, side_old = await so_manager.get_grid_boundaries(symbol)
 
             # разрешаем открыть ордер при пересечении цены выше/ниже середины предыдущей grid boundaries
