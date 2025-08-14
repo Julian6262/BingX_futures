@@ -11,7 +11,6 @@ from handlers import router
 
 from bingx_api.bingx_command import price_upd_ws, so_manager, start_trading, config_manager, manage_listen_key, \
     transaction_upd_ws, request_total_lot
-from indicators.indicator_models import start_indicators
 
 from middlewares.db import DataBaseSession
 from middlewares.http import HttpSession
@@ -61,7 +60,7 @@ async def main():
             manage_listen_key(http_session),
             transaction_upd_ws(),
             request_total_lot(symbols, http_session=http_session),
-            *(start_indicators(symbol, http_session=http_session) for symbol in symbols),
+            # *(start_indicators(symbol, http_session=http_session) for symbol in symbols),
             *(price_upd_ws(symbol, seconds=i) for i, symbol in enumerate(symbols)),
             *(start_trading(symbol, http_session=http_session, async_session=async_session) for symbol in symbols),
 

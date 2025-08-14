@@ -121,7 +121,7 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
                 'total_lot_b': 0,
                 'total_lot_s': 0,
                 'risk_rate': (0, False),
-                'b_s_trigger': 'new',
+                # 'b_s_trigger': 'new',
                 'orders': []}
 
     async def add_symbols_and_orders(self, batch_data: list):
@@ -134,13 +134,13 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
                     'orders': orders
                 })
 
-    async def set_b_s_trigger(self, symbol: str, trigger: str):
-        async with self._lock:
-            self._data[symbol]['b_s_trigger'] = trigger
-
-    async def get_b_s_trigger(self, symbol: str):
-        async with self._lock:
-            return self._data.get(symbol).get('b_s_trigger')
+    # async def set_b_s_trigger(self, symbol: str, trigger: str):
+    #     async with self._lock:
+    #         self._data[symbol]['b_s_trigger'] = trigger
+    #
+    # async def get_b_s_trigger(self, symbol: str):
+    #     async with self._lock:
+    #         return self._data.get(symbol).get('b_s_trigger')
 
     async def set_grid_boundaries(self, symbol: str, grid_boundaries: list):
         async with self._lock:

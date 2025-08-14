@@ -328,14 +328,22 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
     dynamic_lot = lot
 
     if side == 'b':
-
-        if 3 * lot <= total_lot_s - total_lot_b:
+        if total_lot_b == 0:
             dynamic_lot = lot * 2
+
+        elif total_lot_b > 9:
+            dynamic_lot = 0
+
+            logger.info(f"\nДостигнут лимит total_lot_b для {symbol}: {total_lot_b}\n")
 
     elif side == 's':
-
-        if 3 * lot <= total_lot_b - total_lot_s:
+        if total_lot_s == 0:
             dynamic_lot = lot * 2
+
+        elif total_lot_s > 9:
+            dynamic_lot = 0
+
+            logger.info(f"\nДостигнут лимит total_lot_s для {symbol}: {total_lot_s}\n")
 
     return dynamic_lot
 
@@ -343,9 +351,10 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
 async def _handle_order_actions(symbol, session, grid_boundaries, index, price, side_old, flag, bound, side):
     await _delete_orders(symbol, session, grid_boundaries, index, side)
 
-    if side == await so_manager.get_b_s_trigger(symbol) and flag != side and side_old != ('s' if side == 'b' else 'b'):
-        if lot := await config_manager.get_data(symbol, 'lot_b' if side == 'b' else 'lot_s'):
-            dynamic_lot = await _manage_total_lot(symbol, side, lot)
+    if flag != side and side_old != ('s' if side == 'b' else 'b'):
+        lot = await config_manager.get_data(symbol, 'lot_b' if side == 'b' else 'lot_s')
+
+        if dynamic_lot := await _manage_total_lot(symbol, side, lot):
             price_step = await config_manager.get_data(symbol, 'price_step')
             decimal_places = get_decimal_places(await config_manager.get_data(symbol, 'price_step'))
             tp = round(bound + (-price_step if side == 'b' else price_step), decimal_places)
@@ -376,7 +385,7 @@ async def start_trading(symbol, **kwargs):
     async_session = kwargs.get('async_session')
 
     async def trading_logic():
-        while not ((await so_manager.get_risk_rate(symbol))[1] and await config_manager.get_data(symbol, 'macd')):
+        while not ((await so_manager.get_risk_rate(symbol))[1] and await ws_price.get_price(symbol)):
             await sleep(0.3)
 
         logger.info(f'Запуск торговли {symbol}\n')
