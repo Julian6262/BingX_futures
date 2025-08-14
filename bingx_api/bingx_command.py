@@ -163,6 +163,7 @@ async def transaction_upd_ws():
                 async for message in ws:
                     try:
                         if 'o' in (data := loads(decompress(message).decode())):
+                            # logger.info(f"transaction_upd_ws: {data['o']}")
                             await _handle_total_lot(data['o'])
 
                     except Exception as e:
@@ -204,7 +205,7 @@ async def price_upd_ws(symbol, **kwargs):
 
 
 async def _handle_total_lot(data: dict):
-    if data['s']:
+    if data['s'] and data['o'] == 'MARKET':
         symbol = data['s'].split('-')[0]
         quantity = int((data['q'].split('.')[0])[:-1])
         total_lot_b = await so_manager.get_total_lot(symbol, 'LONG')
@@ -331,7 +332,7 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
         if total_lot_b == 0:
             dynamic_lot = lot * 2
 
-        elif total_lot_b > 9:
+        elif total_lot_b >= 10 * lot:
             dynamic_lot = 0
 
             logger.info(f"\nДостигнут лимит total_lot_b для {symbol}: {total_lot_b}\n")
@@ -340,7 +341,7 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
         if total_lot_s == 0:
             dynamic_lot = lot * 2
 
-        elif total_lot_s > 9:
+        elif total_lot_s >= 10 * lot:
             dynamic_lot = 0
 
             logger.info(f"\nДостигнут лимит total_lot_s для {symbol}: {total_lot_s}\n")
