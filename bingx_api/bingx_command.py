@@ -332,19 +332,27 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
         if total_lot_b == 0:
             dynamic_lot = lot * 2
 
-        elif total_lot_b >= 10 * lot:
-            dynamic_lot = 0
+        elif total_lot_b >= 8 * lot:
+            if total_lot_s - total_lot_b >= 0:
+                dynamic_lot = lot
+                logger.info(f"\n{symbol} total_lot_s - total_lot_b {total_lot_s - total_lot_b}\n")
 
-            logger.info(f"\nДостигнут лимит total_lot_b для {symbol}: {total_lot_b}\n")
+            else:
+                dynamic_lot = 0
+                # logger.info(f"\nДостигнут лимит total_lot_b для {symbol}: {total_lot_b}\n")
 
     elif side == 's':
         if total_lot_s == 0:
             dynamic_lot = lot * 2
 
-        elif total_lot_s >= 10 * lot:
-            dynamic_lot = 0
+        elif total_lot_s >= 8 * lot:
+            if total_lot_b - total_lot_s >= 0:
+                dynamic_lot = lot
+                logger.info(f"\n{symbol} total_lot_b - total_lot_s {total_lot_b - total_lot_s}\n")
 
-            logger.info(f"\nДостигнут лимит total_lot_s для {symbol}: {total_lot_s}\n")
+            else:
+                dynamic_lot = 0
+                # logger.info(f"\nДостигнут лимит total_lot_s для {symbol}: {total_lot_s}\n")
 
     return dynamic_lot
 
