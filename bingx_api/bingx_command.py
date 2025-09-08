@@ -323,12 +323,14 @@ async def _handle_midpoint_grid_adjustment(symbol: str, index_old, lower_old, up
         await so_manager.set_grid_boundaries(symbol, [index_old, lower_old, upper_old, False])
 
 
-async def _manage_total_lot(symbol: str, side: str, lot: int):
+async def _manage_total_lot(symbol: str, side: str, lot: int, rsi: float):
     total_lot_b = await so_manager.get_total_lot(symbol, 'LONG')
     total_lot_s = await so_manager.get_total_lot(symbol, 'SHORT')
     dynamic_lot = lot
 
-    if side == 'b':
+    logger.info(f'side = {side}, rsi {symbol} = {rsi}\n')
+
+    if side == 'b' and rsi >= 50.0:
         if total_lot_b == 0:
             dynamic_lot = lot * 2
 
@@ -339,9 +341,8 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
 
             else:
                 dynamic_lot = 0
-                # logger.info(f"\nДостигнут лимит total_lot_b для {symbol}: {total_lot_b}\n")
 
-    elif side == 's':
+    elif side == 's' and rsi <= 50.0:
         if total_lot_s == 0:
             dynamic_lot = lot * 2
 
@@ -352,7 +353,11 @@ async def _manage_total_lot(symbol: str, side: str, lot: int):
 
             else:
                 dynamic_lot = 0
-                # logger.info(f"\nДостигнут лимит total_lot_s для {symbol}: {total_lot_s}\n")
+
+    else:
+        dynamic_lot = 0
+
+    # logger.info(f'dynamic_lot {symbol} = {dynamic_lot}\n')
 
     return dynamic_lot
 
@@ -362,8 +367,9 @@ async def _handle_order_actions(symbol, session, grid_boundaries, index, price, 
 
     if flag != side and side_old != ('s' if side == 'b' else 'b'):
         lot = await config_manager.get_data(symbol, 'lot_b' if side == 'b' else 'lot_s')
+        rsi = await config_manager.get_data(symbol, 'rsi')
 
-        if dynamic_lot := await _manage_total_lot(symbol, side, lot):
+        if dynamic_lot := await _manage_total_lot(symbol, side, lot, rsi):
             price_step = await config_manager.get_data(symbol, 'price_step')
             decimal_places = get_decimal_places(await config_manager.get_data(symbol, 'price_step'))
             tp = round(bound + (-price_step if side == 'b' else price_step), decimal_places)
@@ -394,7 +400,9 @@ async def start_trading(symbol, **kwargs):
     async_session = kwargs.get('async_session')
 
     async def trading_logic():
-        while not ((await so_manager.get_risk_rate(symbol))[1] and await ws_price.get_price(symbol)):
+        while not ((await so_manager.get_risk_rate(symbol))[1] and
+                   # await ws_price.get_price(symbol) and
+                   await config_manager.get_data(symbol, 'rsi')):
             await sleep(0.3)
 
         logger.info(f'Запуск торговли {symbol}\n')
