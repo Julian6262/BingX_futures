@@ -31,12 +31,9 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
     close_prices = np_array(close_prices, dtype=float)
 
     match logic_name:
-        case 'rsi_1h':
+        case 'rsi':
             rsi = RSI(close_prices, timeperiod=14)[-1]
             await config_manager.set_data(symbol, 'rsi', rsi)
-
-            # if symbol == 'LINK':
-            #     print(f'{symbol} rsi = {await config_manager.get_data(symbol, "rsi")}')
 
 
 @add_task(task_manager, so_manager, 'start_indicators')
@@ -44,11 +41,11 @@ async def start_indicators(symbol: str, http_session: ClientSession):
     while not await ws_price.get_price(symbol):
         await sleep(0.3)  # Задержка перед попыткой получения цены
 
-    if not (initial_1h_data := await _get_initial_close_prices(symbol, http_session, '1h')):
+    if not (initial_1h_data := await _get_initial_close_prices(symbol, http_session, '30m')):
         return
 
     delta_1h, next_candle_time_1h, close_prices_deque_1h = initial_1h_data
-    await _process_indicators_logic(symbol, close_prices_deque_1h, 'rsi_1h')
+    await _process_indicators_logic(symbol, close_prices_deque_1h, 'rsi')
     await config_manager.set_data(symbol, 'rsi', True)  # сначала индикатор, потом запуск торгов
 
     logger.info(f'Запуск start_indicators {symbol}')
@@ -61,7 +58,6 @@ async def start_indicators(symbol: str, http_session: ClientSession):
             close_prices_deque_1h.append(price)
             next_candle_time_1h += delta_1h  # Обновляем время следующей свечи
 
-        # !!! изменить запрос индикатора только при открытии ордера !!!
-        await _process_indicators_logic(symbol, close_prices_deque_1h, 'rsi_1h')
+        await _process_indicators_logic(symbol, close_prices_deque_1h, 'rsi')
 
         await sleep(1)

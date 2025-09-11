@@ -172,7 +172,7 @@ async def transaction_upd_ws():
         except Exception as e:
             print(f"Критическая ошибка transaction_upd_ws: {e}")
 
-        logger.error(f"transaction_upd_ws завершился. Переподключение через 5 секунд.")
+        # logger.error(f"transaction_upd_ws завершился. Переподключение через 5 секунд.")
         await sleep(5)
 
 
@@ -200,7 +200,7 @@ async def price_upd_ws(symbol, **kwargs):
         except Exception as e:
             print(f"Критическая ошибка price_upd_ws: {symbol}, {e}")
 
-        logger.error(f"price_upd_ws для {symbol} завершился. Переподключение через 5 секунд.")
+        # logger.error(f"price_upd_ws для {symbol} завершился. Переподключение через 5 секунд.")
         await sleep(5)  # Пауза перед повторным подключением
 
 
